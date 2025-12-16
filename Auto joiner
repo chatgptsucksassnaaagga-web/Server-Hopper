@@ -1,3 +1,7 @@
+-- =========================
+-- Brainrot Sender (Delta)
+-- =========================
+
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
@@ -6,26 +10,32 @@ local request =
     (http and http.request) or
     request
 
--- Change this to your IP address
-local RELAY_URL = "http://10.173.69.78:3000/submit"
+if not request then
+    warn("HTTP request not supported")
+    return
+end
 
--- example brainrot scanner (replace with your real one)
+-- 🔴 CLOUDFARE URL (DO NOT CHANGE)
+local RELAY_URL = "https://selections-impression-renaissance-paul.trycloudflare.com/submit"
+
+-- Example scanner (replace later if you want)
 local function getAllBrainrots()
     return {
-        {Name = "Example Brainrot", MPS = 12000000}
+        {Name = "Brainrot Example", MPS = 15000000}
     }
 end
 
 local function sendToRelay(brainrots)
     if not brainrots or #brainrots == 0 then return end
-    if not request then return end
 
     local best = brainrots[1]
 
     request({
         Url = RELAY_URL,
         Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
         Body = HttpService:JSONEncode({
             placeId = game.PlaceId,
             jobId = game.JobId,
@@ -37,6 +47,4 @@ local function sendToRelay(brainrots)
     })
 end
 
--- run once (or inside your hop loop)
-local brainrots = getAllBrainrots()
-sendToRelay(brainrots)
+sendToRelay(getAllBrainrots())
