@@ -1,15 +1,19 @@
 --====================================
--- Krypth Brainrot Hopper (BOT SCRIPT)
+-- Krypth Brainrot BOT Hopper (RELAY)
 --====================================
 
 repeat task.wait() until game:IsLoaded()
 
+-- ===== CONFIG =====
 local RELAY_URL = "https://selections-impression-renaissance-paul.trycloudflare.com/submit"
+local MIN_PLAYERS = 2
+local MAX_PLAYERS = 7
+local HOP_DELAY = 8 -- slower = no 429
 
+-- ===== SERVICES =====
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
-
 local Player = Players.LocalPlayer
 local PlaceId = game.PlaceId
 
@@ -22,12 +26,7 @@ local request =
 
 if not request then return end
 
--- SETTINGS
-local MIN_PLAYERS = 2
-local MAX_PLAYERS = 7
-local HOP_DELAY = 6
-
--- MONEY UTILS
+-- ===== UTILS =====
 local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12}
 
 local function formatMoney(n)
@@ -37,29 +36,33 @@ local function formatMoney(n)
     return "$"..s.."/s"
 end
 
-local function parseMoney(txt)
-    if not txt then return 0 end
-    txt = tostring(txt):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
-    local num, unit = txt:match("([%d%.]+)(%a?)")
+local function parseMoney(text)
+    if not text then return 0 end
+    text = tostring(text)
+        :gsub("%$","")
+        :gsub("/s","")
+        :gsub("Generation","")
+        :gsub("%s+","")
+    local num, unit = text:match("([%d%.]+)(%a?)")
     return (tonumber(num) or 0) * (multipliers[unit] or 1)
 end
 
--- SCAN BRAINROTS
+-- ===== SCAN =====
 local function getBestBrainrot()
     local best
     local plots = workspace:FindFirstChild("Plots")
-    if not plots then return end
+    if not plots then return nil end
 
-    for _,plot in ipairs(plots:GetChildren()) do
-        for _,obj in ipairs(plot:GetDescendants()) do
+    for _, plot in ipairs(plots:GetChildren()) do
+        for _, obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
-                local nameObj = obj:FindFirstChild("DisplayName")
-                local genObj = obj:FindFirstChild("Generation")
-                if nameObj and genObj then
-                    local name = nameObj.Text or nameObj.Value
-                    local mps = parseMoney(genObj.Text or genObj.Value)
+                local d = obj:FindFirstChild("DisplayName")
+                local g = obj:FindFirstChild("Generation")
+                if d and g then
+                    local name = d.Text or d.Value
+                    local mps = parseMoney(g.Text or g.Value)
                     if not best or mps > best.mps then
-                        best = {name=name,mps=mps}
+                        best = {name=name, mps=mps}
                     end
                 end
             end
@@ -68,8 +71,8 @@ local function getBestBrainrot()
     return best
 end
 
--- SEND (OVERWRITES OLD DATA)
-local function send(best)
+-- ===== SEND (OVERWRITE OLD DATA) =====
+local function sendToRelay(best)
     request({
         Url = RELAY_URL,
         Method = "POST",
@@ -83,20 +86,44 @@ local function send(best)
     })
 end
 
--- SERVER HOP
+-- ===== SERVER LIST (RATE-LIMIT SAFE) =====
 local visited = {}
+local lastRequest = 0
+local REQUEST_COOLDOWN = 2.5
 
 local function getServers(cursor)
-    local url = "https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?limit=100"
-    if cursor then url ..= "&cursor="..cursor end
-    return HttpService:JSONDecode(game:HttpGet(url))
+    local now = os.clock()
+    if now - lastRequest < REQUEST_COOLDOWN then
+        task.wait(REQUEST_COOLDOWN - (now - lastRequest))
+    end
+    lastRequest = os.clock()
+
+    local url =
+        "https://games.roblox.com/v1/games/"
+        .. PlaceId
+        .. "/servers/Public?limit=100"
+
+    if cursor then url ..= "&cursor=" .. cursor end
+
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
+
+    if not ok then
+        task.wait(5)
+        return nil
+    end
+
+    return HttpService:JSONDecode(body)
 end
 
 local function findServer()
     local cursor
     while true do
         local data = getServers(cursor)
-        for _,s in ipairs(data.data) do
+        if not data then return nil end
+
+        for _, s in ipairs(data.data) do
             if not visited[s.id]
             and s.playing >= MIN_PLAYERS
             and s.playing <= MAX_PLAYERS then
@@ -104,23 +131,26 @@ local function findServer()
                 return s.id
             end
         end
+
         cursor = data.nextPageCursor
-        if not cursor then break end
+        if not cursor then
+            visited = {}
+            return nil
+        end
     end
-    visited = {}
 end
 
--- MAIN LOOP
+-- ===== MAIN LOOP =====
 while true do
     task.wait(HOP_DELAY)
 
     local best = getBestBrainrot()
     if best and best.mps >= 1e6 then
-        send(best)
+        sendToRelay(best)
     end
 
-    local id = findServer()
-    if id then
-        TeleportService:TeleportToPlaceInstance(PlaceId, id, Player)
+    local serverId = findServer()
+    if serverId then
+        TeleportService:TeleportToPlaceInstance(PlaceId, serverId, Player)
     end
 end
