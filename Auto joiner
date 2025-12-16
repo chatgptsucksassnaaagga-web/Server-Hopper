@@ -1,50 +1,126 @@
--- =========================
--- Brainrot Sender (Delta)
--- =========================
+--====================================
+-- Krypth Brainrot Hopper (BOT SCRIPT)
+--====================================
 
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
+repeat task.wait() until game:IsLoaded()
 
-local request =
-    (syn and syn.request) or
-    (http and http.request) or
-    request
-
-if not request then
-    warn("HTTP request not supported")
-    return
-end
-
--- 🔴 CLOUDFARE URL (DO NOT CHANGE)
 local RELAY_URL = "https://selections-impression-renaissance-paul.trycloudflare.com/submit"
 
--- Example scanner (replace later if you want)
-local function getAllBrainrots()
-    return {
-        {Name = "Brainrot Example", MPS = 15000000}
-    }
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+
+local Player = Players.LocalPlayer
+local PlaceId = game.PlaceId
+
+local request =
+    (syn and syn.request)
+    or (http and http.request)
+    or (fluxus and fluxus.request)
+    or (krnl and krnl.request)
+    or request
+
+if not request then return end
+
+-- SETTINGS
+local MIN_PLAYERS = 2
+local MAX_PLAYERS = 7
+local HOP_DELAY = 6
+
+-- MONEY UTILS
+local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12}
+
+local function formatMoney(n)
+    n = math.floor(n)
+    local s = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    if s:sub(1,1) == "," then s = s:sub(2) end
+    return "$"..s.."/s"
 end
 
-local function sendToRelay(brainrots)
-    if not brainrots or #brainrots == 0 then return end
+local function parseMoney(txt)
+    if not txt then return 0 end
+    txt = tostring(txt):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
+    local num, unit = txt:match("([%d%.]+)(%a?)")
+    return (tonumber(num) or 0) * (multipliers[unit] or 1)
+end
 
-    local best = brainrots[1]
+-- SCAN BRAINROTS
+local function getBestBrainrot()
+    local best
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return end
 
+    for _,plot in ipairs(plots:GetChildren()) do
+        for _,obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "AnimalOverhead" then
+                local nameObj = obj:FindFirstChild("DisplayName")
+                local genObj = obj:FindFirstChild("Generation")
+                if nameObj and genObj then
+                    local name = nameObj.Text or nameObj.Value
+                    local mps = parseMoney(genObj.Text or genObj.Value)
+                    if not best or mps > best.mps then
+                        best = {name=name,mps=mps}
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- SEND (OVERWRITES OLD DATA)
+local function send(best)
     request({
         Url = RELAY_URL,
         Method = "POST",
-        Headers = {
-            ["Content-Type"] = "application/json"
-        },
+        Headers = {["Content-Type"]="application/json"},
         Body = HttpService:JSONEncode({
-            placeId = game.PlaceId,
+            brainrot = best.name,
+            money = formatMoney(best.mps),
             jobId = game.JobId,
-            bestBrainrot = best.Name,
-            mps = best.MPS,
-            players = #Players:GetPlayers(),
-            maxPlayers = Players.MaxPlayers
+            placeId = PlaceId
         })
     })
 end
 
-sendToRelay(getAllBrainrots())
+-- SERVER HOP
+local visited = {}
+
+local function getServers(cursor)
+    local url = "https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?limit=100"
+    if cursor then url ..= "&cursor="..cursor end
+    return HttpService:JSONDecode(game:HttpGet(url))
+end
+
+local function findServer()
+    local cursor
+    while true do
+        local data = getServers(cursor)
+        for _,s in ipairs(data.data) do
+            if not visited[s.id]
+            and s.playing >= MIN_PLAYERS
+            and s.playing <= MAX_PLAYERS then
+                visited[s.id] = true
+                return s.id
+            end
+        end
+        cursor = data.nextPageCursor
+        if not cursor then break end
+    end
+    visited = {}
+end
+
+-- MAIN LOOP
+while true do
+    task.wait(HOP_DELAY)
+
+    local best = getBestBrainrot()
+    if best and best.mps >= 1e6 then
+        send(best)
+    end
+
+    local id = findServer()
+    if id then
+        TeleportService:TeleportToPlaceInstance(PlaceId, id, Player)
+    end
+end
