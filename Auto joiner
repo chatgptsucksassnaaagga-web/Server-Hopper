@@ -6,7 +6,8 @@ local request =
     (http and http.request) or
     request
 
-local RELAY_URL = "http://localhost:3000/submit"
+-- Change this to your IP address
+local RELAY_URL = "http://10.173.69.78:3000/submit"
 
 -- example brainrot scanner (replace with your real one)
 local function getAllBrainrots()
@@ -16,7 +17,9 @@ local function getAllBrainrots()
 end
 
 local function sendToRelay(brainrots)
-    if #brainrots == 0 then return end
+    if not brainrots or #brainrots == 0 then return end
+    if not request then return end
+
     local best = brainrots[1]
 
     request({
