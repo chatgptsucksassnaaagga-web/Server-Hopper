@@ -5,7 +5,7 @@
 repeat task.wait() until game:IsLoaded()
 
 -- ===== CONFIG =====
-local RELAY_URL = "https://selections-impression-renaissance-paul.trycloudflare.com/submit"
+local RELAY_URL = "https://visible-self-furnishings-relatives.trycloudflare.com/submit"
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 7
 local HOP_DELAY = 8 -- slower = no 429
