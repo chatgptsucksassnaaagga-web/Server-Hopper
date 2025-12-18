@@ -1,112 +1,137 @@
-local gui = loadstring(game:HttpGet("https://pastebin.com/raw/REPLACE_WITH_YOUR_G2L"))()
--- ↑ If you already pasted G2L directly, REMOVE this line and keep gui reference below
+print("====================")
+print("Krypth Notifier")
+print("====================")
 
-local ScreenGui = gui
-local Whole = ScreenGui:FindFirstChild("Whole frame", true)
-local LogFrame = Whole:FindFirstChild("Log frame", true)
+local RELAY_SUBMIT = "https://groups-patch-glad-pollution.trycloudflare.com/submit"
 
-local RefreshBtn = Whole:FindFirstChild("Refresh Button", true)
-local ClearBtn = Whole:FindFirstChild("TextButton", true)
-local AutoJoinBtn = Whole:FindFirstChild("Auto join", true)
-
-local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
-local Player = Players.LocalPlayer
-
-local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or request
+local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request) or request
 if not request then return end
 
-local RELAY_SERVERS = "https://acne-variations-flexibility-designs.trycloudflare.com/servers"
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local Player = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
 
-local autoJoin = false
-local logs = {}
+local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12,Q=1e15}
 
--- SCROLLING
-local layout = Instance.new("UIListLayout", LogFrame)
-layout.Padding = UDim.new(0,6)
+local MIN_PLAYERS = 2
+local MAX_PLAYERS = 7
+local COOLDOWN = 6
 
-local padding = Instance.new("UIPadding", LogFrame)
-padding.PaddingTop = UDim.new(0,8)
-padding.PaddingLeft = UDim.new(0,6)
+local hopping = false
+local visitedServers = {}
+local PlaceId = game.PlaceId
 
-LogFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
-LogFrame.CanvasSize = UDim2.new(0,0,0,0)
-LogFrame.ScrollBarImageTransparency = 0.4
-LogFrame.ScrollBarThickness = 4
-
--- CLEAR LOGS
-local function clearLogs()
-	for _,v in ipairs(LogFrame:GetChildren()) do
-		if v:IsA("Frame") and v.Name == "LOG" then
-			v:Destroy()
-		end
-	end
+local function httpGet(url)
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if ok then return res end
+    local r = request({Url=url, Method="GET"})
+    return r and r.Body or nil
 end
 
--- CREATE LOG ENTRY
-local function createLog(data)
-	local log = Whole.Log_frame.LOG:Clone()
-	log.Parent = LogFrame
-	log.Visible = true
-
-	log:FindFirstChild("Brainrot name").Text = data.brainrot
-	log:FindFirstChild("MPS").Text = tostring(math.floor(data.mps/1e6)).."M"
-
-	local join = log:FindFirstChild("Join button")
-	join.MouseButton1Click:Connect(function()
-		TeleportService:TeleportToPlaceInstance(
-			data.placeId,
-			data.jobId,
-			Player
-		)
-	end)
-
-	LogFrame.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 20)
+local function parseMoney(str)
+    if not str then return 0 end
+    str = tostring(str):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
+    local number,unit = str:match("([%d%.]+)(%a?)")
+    local n = tonumber(number) or 0
+    return n * (multipliers[unit] or 1)
 end
 
--- FETCH SERVERS
-local function fetchServers()
-	local res = request({
-		Url = RELAY_SERVERS,
-		Method = "GET"
-	})
-	if not res or not res.Body then return end
-
-	local data = HttpService:JSONDecode(res.Body)
-	clearLogs()
-
-	for _,server in ipairs(data) do
-		createLog(server)
-	end
+local function getAllBrainrots()
+    local scanned = {}
+    local list = {}
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return list end
+    for _,plot in ipairs(plots:GetChildren()) do
+        for _,obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "AnimalOverhead" then
+                local bb = obj.Parent
+                if bb then
+                    local key = bb:GetFullName()
+                    if not scanned[key] then
+                        scanned[key] = true
+                        local d = obj:FindFirstChild("DisplayName")
+                        local g = obj:FindFirstChild("Generation")
+                        local name = d and (d.Text or d.Value) or "Unknown"
+                        local gen = g and (g.Text or g.Value) or "0"
+                        local mps = parseMoney(gen)
+                        if mps > 0 then
+                            table.insert(list,{Name=name,MPS=mps})
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(list,function(a,b) return a.MPS>b.MPS end)
+    return list
 end
 
--- AUTO JOIN LOOP
+local function sendToRelay(brainrot)
+    local payload = {
+        brainrot = brainrot.Name,
+        money = brainrot.MPS,
+        mps = brainrot.MPS,
+        placeId = PlaceId,
+        jobId = game.JobId,
+        players = #Players:GetPlayers(),
+        maxPlayers = Players.MaxPlayers
+    }
+    pcall(function()
+        request({
+            Url = RELAY_SUBMIT,
+            Method = "POST",
+            Headers = {["Content-Type"]="application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+end
+
+local function GetServers(cursor)
+    local url = "https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
+    if cursor then url = url.."&cursor="..cursor end
+    local body = httpGet(url)
+    if not body then return nil end
+    local data = HttpService:JSONDecode(body)
+    if not data or type(data.data) ~= "table" then
+        data = {data={}}
+    end
+    return data
+end
+
+local function FindGoodServer()
+    local cursor
+    while true do
+        local data = GetServers(cursor)
+        if not data then break end
+        for _,server in ipairs(data.data) do
+            if server.playing >= MIN_PLAYERS and server.playing <= MAX_PLAYERS and server.id ~= game.JobId and not visitedServers[server.id] then
+                visitedServers[server.id] = true
+                return server.id
+            end
+        end
+        cursor = data.nextPageCursor
+        if not cursor then break end
+    end
+    visitedServers = {}
+end
+
 task.spawn(function()
-	while true do
-		task.wait(2)
-		if autoJoin then
-			local res = request({Url = RELAY_SERVERS, Method = "GET"})
-			if res and res.Body then
-				local data = HttpService:JSONDecode(res.Body)
-				if data[1] then
-					TeleportService:TeleportToPlaceInstance(
-						data[1].placeId,
-						data[1].jobId,
-						Player
-					)
-				end
-			end
-		end
-	end
-end)
-
--- BUTTON HOOKS
-RefreshBtn.MouseButton1Click:Connect(fetchServers)
-
-ClearBtn.MouseButton1Click:Connect(clearLogs)
-
-AutoJoinBtn.MouseButton1Click:Connect(function()
-	autoJoin = not autoJoin
-	AutoJoinBtn.Text = autoJoin and "AUTO JOIN ✓" or "AUTO JOIN"
+    while true do
+        task.wait(COOLDOWN)
+        if not hopping then
+            hopping = true
+            local brainrots = getAllBrainrots()
+            if brainrots[1] then
+                sendToRelay(brainrots[1])
+            end
+            local id = FindGoodServer()
+            if id then
+                pcall(function()
+                    TeleportService:TeleportToPlaceInstance(PlaceId, id, Player)
+                end)
+            end
+            hopping = false
+        end
+    end
 end)
