@@ -11,7 +11,7 @@ local HttpService = game:GetService("HttpService")
 
 local Player = Players.LocalPlayer
 local PLACE_ID = game.PlaceId
-local RELAY_URL = "https://introducing-annual-sys-oops.trycloudflare.com"
+local RELAY_URL = "https://introducing-annual-sys-oops.trycloudflare.com/servers"
 
 -- EXECUTOR REQUEST
 local request = request or http_request or syn.request
