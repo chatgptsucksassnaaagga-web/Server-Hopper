@@ -1,92 +1,112 @@
--- =====================================
--- KRYPTH BRAINROT SCANNER + SUBMITTER
--- =====================================
+local gui = loadstring(game:HttpGet("https://pastebin.com/raw/REPLACE_WITH_YOUR_G2L"))()
+-- ↑ If you already pasted G2L directly, REMOVE this line and keep gui reference below
 
-repeat task.wait() until game:IsLoaded()
+local ScreenGui = gui
+local Whole = ScreenGui:FindFirstChild("Whole frame", true)
+local LogFrame = Whole:FindFirstChild("Log frame", true)
 
--- SERVICES
+local RefreshBtn = Whole:FindFirstChild("Refresh Button", true)
+local ClearBtn = Whole:FindFirstChild("TextButton", true)
+local AutoJoinBtn = Whole:FindFirstChild("Auto join", true)
+
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
-
 local Player = Players.LocalPlayer
-local PLACE_ID = game.PlaceId
-local RELAY_URL = "https://introducing-annual-sys-oops.trycloudflare.com/servers"
 
--- EXECUTOR REQUEST
-local request = request or http_request or syn.request
-if not request then
-	warn("No HTTP request function available")
-	return
+local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or request
+if not request then return end
+
+local RELAY_SERVERS = "https://acne-variations-flexibility-designs.trycloudflare.com/servers"
+
+local autoJoin = false
+local logs = {}
+
+-- SCROLLING
+local layout = Instance.new("UIListLayout", LogFrame)
+layout.Padding = UDim.new(0,6)
+
+local padding = Instance.new("UIPadding", LogFrame)
+padding.PaddingTop = UDim.new(0,8)
+padding.PaddingLeft = UDim.new(0,6)
+
+LogFrame.AutomaticCanvasSize = Enum.AutomaticSize.None
+LogFrame.CanvasSize = UDim2.new(0,0,0,0)
+LogFrame.ScrollBarImageTransparency = 0.4
+LogFrame.ScrollBarThickness = 4
+
+-- CLEAR LOGS
+local function clearLogs()
+	for _,v in ipairs(LogFrame:GetChildren()) do
+		if v:IsA("Frame") and v.Name == "LOG" then
+			v:Destroy()
+		end
+	end
 end
 
--- FORMAT MONEY
-local function format(n)
-	local s = tostring(math.floor(n))
-	return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+-- CREATE LOG ENTRY
+local function createLog(data)
+	local log = Whole.Log_frame.LOG:Clone()
+	log.Parent = LogFrame
+	log.Visible = true
+
+	log:FindFirstChild("Brainrot name").Text = data.brainrot
+	log:FindFirstChild("MPS").Text = tostring(math.floor(data.mps/1e6)).."M"
+
+	local join = log:FindFirstChild("Join button")
+	join.MouseButton1Click:Connect(function()
+		TeleportService:TeleportToPlaceInstance(
+			data.placeId,
+			data.jobId,
+			Player
+		)
+	end)
+
+	LogFrame.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 20)
 end
 
--- SCAN BRAINROTS (SAFE)
-local function getBestBrainrot()
-	local best
+-- FETCH SERVERS
+local function fetchServers()
+	local res = request({
+		Url = RELAY_SERVERS,
+		Method = "GET"
+	})
+	if not res or not res.Body then return end
 
-	for _,d in ipairs(workspace:GetDescendants()) do
-		if d.Name == "AnimalOverhead" then
-			local name = d:FindFirstChild("DisplayName")
-			local gen = d:FindFirstChild("Generation")
+	local data = HttpService:JSONDecode(res.Body)
+	clearLogs()
 
-			if name and gen and gen:IsA("TextLabel") then
-				local mps = tonumber(gen.Text:gsub("%D",""))
-				if mps then
-					if not best or mps > best.MPS then
-						best = {
-							Name = name.Text,
-							MPS = mps
-						}
-					end
+	for _,server in ipairs(data) do
+		createLog(server)
+	end
+end
+
+-- AUTO JOIN LOOP
+task.spawn(function()
+	while true do
+		task.wait(2)
+		if autoJoin then
+			local res = request({Url = RELAY_SERVERS, Method = "GET"})
+			if res and res.Body then
+				local data = HttpService:JSONDecode(res.Body)
+				if data[1] then
+					TeleportService:TeleportToPlaceInstance(
+						data[1].placeId,
+						data[1].jobId,
+						Player
+					)
 				end
 			end
 		end
 	end
+end)
 
-	return best
-end
+-- BUTTON HOOKS
+RefreshBtn.MouseButton1Click:Connect(fetchServers)
 
--- SEND TO RELAY (SAFE)
-local function submit(best)
-	local ok, err = pcall(function()
-		request({
-			Url = RELAY_URL,
-			Method = "POST",
-			Headers = {
-				["Content-Type"] = "application/json"
-			},
-			Body = HttpService:JSONEncode({
-				brainrot = best.Name,
-				money = "$" .. format(best.MPS) .. "/s",
-				mps = best.MPS,
-				placeId = PLACE_ID,
-				jobId = game.JobId,
-				players = #Players:GetPlayers(),
-				maxPlayers = Players.MaxPlayers
-			})
-		})
-	end)
+ClearBtn.MouseButton1Click:Connect(clearLogs)
 
-	if not ok then
-		warn("Submit failed:", err)
-	end
-end
-
--- ============================
--- MAIN LOOP (NO TELEPORT SPAM)
--- ============================
-local lastMPS = 0
-
-while task.wait(8) do
-	local best = getBestBrainrot()
-	if best and best.MPS > lastMPS then
-		lastMPS = best.MPS
-		submit(best)
-	end
-end
+AutoJoinBtn.MouseButton1Click:Connect(function()
+	autoJoin = not autoJoin
+	AutoJoinBtn.Text = autoJoin and "AUTO JOIN ✓" or "AUTO JOIN"
+end)
