@@ -1,14 +1,17 @@
 --====================================
 -- Krypth Brainrot BOT Hopper (RELAY)
+-- UPGRADED / FIXED
 --====================================
 
 repeat task.wait() until game:IsLoaded()
 
 -- ===== CONFIG =====
-local RELAY_URL = "https://talks-prize-strings-system.trycloudflare.com/servers"
+local RELAY_URL = "  https://subcommittee-resort-victor-retail.trycloudflare.com"
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 7
-local HOP_DELAY = 8 -- slower = no 429
+local HOP_DELAY = 10
+local MIN_MPS_TO_REPORT = 1e6 -- 1M/s
+local MAX_TIME_IN_SERVER = 25 -- seconds before forced hop
 
 -- ===== SERVICES =====
 local HttpService = game:GetService("HttpService")
@@ -17,6 +20,7 @@ local TeleportService = game:GetService("TeleportService")
 local Player = Players.LocalPlayer
 local PlaceId = game.PlaceId
 
+-- ===== REQUEST =====
 local request =
     (syn and syn.request)
     or (http and http.request)
@@ -24,17 +28,13 @@ local request =
     or (krnl and krnl.request)
     or request
 
-if not request then return end
+if not request then
+    warn("[KRY PTH] No HTTP request function")
+    return
+end
 
 -- ===== UTILS =====
 local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12}
-
-local function formatMoney(n)
-    n = math.floor(n)
-    local s = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    if s:sub(1,1) == "," then s = s:sub(2) end
-    return "$"..s.."/s"
-end
 
 local function parseMoney(text)
     if not text then return 0 end
@@ -47,46 +47,73 @@ local function parseMoney(text)
     return (tonumber(num) or 0) * (multipliers[unit] or 1)
 end
 
--- ===== SCAN =====
+local function formatMoney(n)
+    n = math.floor(n)
+    local s = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    if s:sub(1,1) == "," then s = s:sub(2) end
+    return "$"..s.."/s"
+end
+
+-- ===== BRAINROT SCAN =====
 local function getBestBrainrot()
-    local best
     local plots = workspace:FindFirstChild("Plots")
     if not plots then return nil end
+
+    local best
 
     for _, plot in ipairs(plots:GetChildren()) do
         for _, obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
                 local d = obj:FindFirstChild("DisplayName")
                 local g = obj:FindFirstChild("Generation")
-                if d and g then
-                    local name = d.Text or d.Value
-                    local mps = parseMoney(g.Text or g.Value)
+
+                local name =
+                    d and (d.Text or d.Value)
+
+                local mps =
+                    g and parseMoney(g.Text or g.Value) or 0
+
+                if name and mps > 0 then
                     if not best or mps > best.mps then
-                        best = {name=name, mps=mps}
+                        best = {
+                            name = name,
+                            mps = mps
+                        }
                     end
                 end
             end
         end
     end
+
     return best
 end
 
--- ===== SEND (OVERWRITE OLD DATA) =====
+-- ===== RELAY SEND (SAFE) =====
+local lastRelay = 0
+local RELAY_COOLDOWN = 12
+
 local function sendToRelay(best)
-    request({
-        Url = RELAY_URL,
-        Method = "POST",
-        Headers = {["Content-Type"]="application/json"},
-        Body = HttpService:JSONEncode({
-            brainrot = best.name,
-            money = formatMoney(best.mps),
-            jobId = game.JobId,
-            placeId = PlaceId
+    if os.clock() - lastRelay < RELAY_COOLDOWN then
+        return
+    end
+    lastRelay = os.clock()
+
+    task.spawn(function()
+        request({
+            Url = RELAY_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({
+                brainrot = best.name,
+                money = formatMoney(best.mps),
+                jobId = game.JobId,
+                placeId = PlaceId
+            })
         })
-    })
+    end)
 end
 
--- ===== SERVER LIST (RATE-LIMIT SAFE) =====
+-- ===== SERVER HOP =====
 local visited = {}
 local lastRequest = 0
 local REQUEST_COOLDOWN = 2.5
@@ -103,7 +130,9 @@ local function getServers(cursor)
         .. PlaceId
         .. "/servers/Public?limit=100"
 
-    if cursor then url ..= "&cursor=" .. cursor end
+    if cursor then
+        url ..= "&cursor=" .. cursor
+    end
 
     local ok, body = pcall(function()
         return game:HttpGet(url)
@@ -119,6 +148,7 @@ end
 
 local function findServer()
     local cursor
+
     while true do
         local data = getServers(cursor)
         if not data then return nil end
@@ -140,17 +170,37 @@ local function findServer()
     end
 end
 
--- ===== MAIN LOOP =====
+-- ===== MAIN =====
+local joinedAt = os.clock()
+
 while true do
     task.wait(HOP_DELAY)
 
     local best = getBestBrainrot()
-    if best and best.mps >= 1e6 then
-        sendToRelay(best)
+
+    if best then
+        print("[KRY PTH] Found:", best.name, formatMoney(best.mps))
+
+        if best.mps >= MIN_MPS_TO_REPORT then
+            sendToRelay(best)
+            print("[KRY PTH] Sent to relay")
+        end
+    else
+        print("[KRY PTH] No brainrot found")
     end
 
-    local serverId = findServer()
-    if serverId then
-        TeleportService:TeleportToPlaceInstance(PlaceId, serverId, Player)
+    -- stay if server is good
+    if best and best.mps >= MIN_MPS_TO_REPORT then
+        joinedAt = os.clock()
+        continue
+    end
+
+    -- force hop if dead too long
+    if os.clock() - joinedAt >= MAX_TIME_IN_SERVER then
+        local serverId = findServer()
+        if serverId then
+            print("[KRY PTH] Hopping server")
+            TeleportService:TeleportToPlaceInstance(PlaceId, serverId, Player)
+        end
     end
 end
