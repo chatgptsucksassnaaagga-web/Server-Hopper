@@ -6,7 +6,7 @@
 repeat task.wait() until game:IsLoaded()
 
 -- ===== CONFIG =====
-local RELAY_URL = "  https://subcommittee-resort-victor-retail.trycloudflare.com"
+local RELAY_URL = "  https://subcommittee-resort-victor-retail.trycloudflare.com/servers"
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 7
 local HOP_DELAY = 10
