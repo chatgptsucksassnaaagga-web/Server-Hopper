@@ -18,7 +18,7 @@ if type(request) ~= "function" then
 end
 
 -- 🔥 USE THE SAME URL AS THE BOTS
-local RELAY_URL = "https://venture-round-blake-commercial.trycloudflare.com"
+local RELAY_URL = "https://venture-round-blake-commercial.trycloudflare.com/servers"
 
 local AUTO_JOIN = false
 local REFRESH_DELAY = 5
