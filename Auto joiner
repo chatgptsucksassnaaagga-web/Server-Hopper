@@ -2,7 +2,7 @@ print("====================")
 print("Krypth Notifier")
 print("====================")
 
-local RELAY_SUBMIT = "https://groups-patch-glad-pollution.trycloudflare.com/submit"
+local RELAY_SUBMIT = "https://venture-round-blake-commercial.trycloudflare.com/servers"
 
 local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request) or request
 if not request then return end
