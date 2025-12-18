@@ -1,201 +1,137 @@
--- ==============================
--- Krypth AJ – FINAL FIXED
--- ==============================
+print("====================")
+print("Krypth Notifier")
+print("====================")
 
-local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
+local RELAY_SUBMIT = "https://pittsburgh-competitive-continuing-doe.trycloudflare.com/servers"
+
+local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request) or request
+if not request then return end
+
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
 
-local request =
-    (syn and syn.request) or
-    (http and http.request) or
-    (fluxus and fluxus.request) or
-    (krnl and krnl.request)
+local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12,Q=1e15}
 
-if type(request) ~= "function" then
-    error("HTTP not supported")
+local MIN_PLAYERS = 2
+local MAX_PLAYERS = 7
+local COOLDOWN = 6
+
+local hopping = false
+local visitedServers = {}
+local PlaceId = game.PlaceId
+
+local function httpGet(url)
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if ok then return res end
+    local r = request({Url=url, Method="GET"})
+    return r and r.Body or nil
 end
 
--- 🔥 USE THE SAME URL AS THE BOTS
-local RELAY_URL = "https://venture-round-blake-commercial.trycloudflare.com/servers"
+local function parseMoney(str)
+    if not str then return 0 end
+    str = tostring(str):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
+    local number,unit = str:match("([%d%.]+)(%a?)")
+    local n = tonumber(number) or 0
+    return n * (multipliers[unit] or 1)
+end
 
-local AUTO_JOIN = false
-local REFRESH_DELAY = 5
-local FONT = Enum.Font.GothamBold
-
--- ==============================
--- GUI
--- ==============================
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "KrypthAJ"
-gui.ResetOnSpawn = false
-gui.Parent = Player:WaitForChild("PlayerGui")
-
-local main = Instance.new("Frame", gui)
-main.Size = UDim2.new(0, 360, 0, 420)
-main.Position = UDim2.new(0.38, 0, 0.15, 0)
-main.BackgroundColor3 = Color3.fromRGB(25,25,25)
-main.BackgroundTransparency = 0.02
-Instance.new("UICorner", main).CornerRadius = UDim.new(0,6)
-Instance.new("UIDragDetector", main)
-
-local stroke = Instance.new("UIStroke", main)
-stroke.Color = Color3.fromRGB(220,40,20)
-stroke.Thickness = 2
-
-local title = Instance.new("TextLabel", main)
-title.Size = UDim2.new(1, -20, 0, 36)
-title.Position = UDim2.new(0, 10, 0, 6)
-title.BackgroundTransparency = 1
-title.Text = "Krypth AJ"
-title.TextColor3 = Color3.new(1,1,1)
-title.TextSize = 24
-title.Font = FONT
-
-local logsTitle = Instance.new("TextLabel", main)
-logsTitle.Size = UDim2.new(1, -20, 0, 24)
-logsTitle.Position = UDim2.new(0, 10, 0, 44)
-logsTitle.BackgroundTransparency = 1
-logsTitle.Text = "LOGS"
-logsTitle.TextColor3 = Color3.new(1,1,1)
-logsTitle.TextSize = 18
-logsTitle.Font = FONT
-
-local logFrame = Instance.new("ScrollingFrame", main)
-logFrame.Size = UDim2.new(1, -20, 1, -130)
-logFrame.Position = UDim2.new(0, 10, 0, 74)
-logFrame.CanvasSize = UDim2.new(0,0,0,0)
-logFrame.ScrollBarImageTransparency = 1
-logFrame.BackgroundColor3 = Color3.fromRGB(0,0,0)
-logFrame.BackgroundTransparency = 0.4
-Instance.new("UICorner", logFrame).CornerRadius = UDim.new(0,4)
-
-local list = Instance.new("UIListLayout", logFrame)
-list.Padding = UDim.new(0,8)
-
--- ==============================
--- LOG FUNCTIONS
--- ==============================
-
-local function clearLogs()
-    for _,v in ipairs(logFrame:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
+local function getAllBrainrots()
+    local scanned = {}
+    local list = {}
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return list end
+    for _,plot in ipairs(plots:GetChildren()) do
+        for _,obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "AnimalOverhead" then
+                local bb = obj.Parent
+                if bb then
+                    local key = bb:GetFullName()
+                    if not scanned[key] then
+                        scanned[key] = true
+                        local d = obj:FindFirstChild("DisplayName")
+                        local g = obj:FindFirstChild("Generation")
+                        local name = d and (d.Text or d.Value) or "Unknown"
+                        local gen = g and (g.Text or g.Value) or "0"
+                        local mps = parseMoney(gen)
+                        if mps > 0 then
+                            table.insert(list,{Name=name,MPS=mps})
+                        end
+                    end
+                end
+            end
+        end
     end
-    logFrame.CanvasSize = UDim2.new(0,0,0,0)
+    table.sort(list,function(a,b) return a.MPS>b.MPS end)
+    return list
 end
 
-local function createLog(server)
-    if not server.placeId or not server.jobId then return end
-
-    local f = Instance.new("Frame", logFrame)
-    f.Size = UDim2.new(1, -10, 0, 60)
-    f.BackgroundColor3 = Color3.fromRGB(190,30,15)
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0,4)
-
-    local name = Instance.new("TextLabel", f)
-    name.Size = UDim2.new(0.6,0,0.45,0)
-    name.Position = UDim2.new(0.03,0,0.05,0)
-    name.BackgroundTransparency = 1
-    name.Text = tostring(server.brainrot or "Unknown")
-    name.TextColor3 = Color3.new(1,1,1)
-    name.TextSize = 16
-    name.Font = FONT
-
-    local mps = Instance.new("TextLabel", f)
-    mps.Size = UDim2.new(0.6,0,0.35,0)
-    mps.Position = UDim2.new(0.03,0,0.55,0)
-    mps.BackgroundTransparency = 1
-    mps.Text = "$"..tostring(server.mps or 0).."/s"
-    mps.TextColor3 = Color3.new(1,1,1)
-    mps.TextSize = 14
-    mps.Font = FONT
-
-    local join = Instance.new("TextButton", f)
-    join.Size = UDim2.new(0,90,0,40)
-    join.Position = UDim2.new(0.7,0,0.15,0)
-    join.Text = "JOIN"
-    join.TextColor3 = Color3.new(1,1,1)
-    join.TextSize = 18
-    join.BackgroundColor3 = Color3.fromRGB(150,20,10)
-    join.Font = FONT
-    Instance.new("UICorner", join).CornerRadius = UDim.new(0,4)
-
-    join.MouseButton1Click:Connect(function()
-        TeleportService:TeleportToPlaceInstance(
-            server.placeId,
-            server.jobId,
-            Player
-        )
+local function sendToRelay(brainrot)
+    local payload = {
+        brainrot = brainrot.Name,
+        money = brainrot.MPS,
+        mps = brainrot.MPS,
+        placeId = PlaceId,
+        jobId = game.JobId,
+        players = #Players:GetPlayers(),
+        maxPlayers = Players.MaxPlayers
+    }
+    pcall(function()
+        request({
+            Url = RELAY_SUBMIT,
+            Method = "POST",
+            Headers = {["Content-Type"]="application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
     end)
 end
 
--- ==============================
--- FETCH (FIXED)
--- ==============================
-
-local function fetchServers()
-    local res = request({ Url = RELAY_URL, Method = "GET" })
-    if not res or not res.Body then return end
-
-    local ok, decoded = pcall(function()
-        return HttpService:JSONDecode(res.Body)
-    end)
-    if not ok then return end
-
-    -- 🔥 HANDLE BOTH OBJECT OR ARRAY
-    local servers = {}
-    if decoded.placeId then
-        table.insert(servers, decoded)
-    elseif type(decoded) == "table" then
-        servers = decoded
+local function GetServers(cursor)
+    local url = "https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
+    if cursor then url = url.."&cursor="..cursor end
+    local body = httpGet(url)
+    if not body then return nil end
+    local data = HttpService:JSONDecode(body)
+    if not data or type(data.data) ~= "table" then
+        data = {data={}}
     end
-
-    clearLogs()
-    for _,s in ipairs(servers) do
-        createLog(s)
-        task.wait()
-    end
-    logFrame.CanvasSize = UDim2.new(0,0,0,list.AbsoluteContentSize.Y + 10)
+    return data
 end
 
--- ==============================
--- BUTTONS
--- ==============================
-
-local function makeButton(text, x)
-    local b = Instance.new("TextButton", main)
-    b.Size = UDim2.new(0,110,0,34)
-    b.Position = UDim2.new(0, x, 1, -46)
-    b.Text = text
-    b.TextColor3 = Color3.new(1,1,1)
-    b.TextSize = 16
-    b.BackgroundColor3 = Color3.fromRGB(200,35,20)
-    b.Font = FONT
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,4)
-    return b
+local function FindGoodServer()
+    local cursor
+    while true do
+        local data = GetServers(cursor)
+        if not data then break end
+        for _,server in ipairs(data.data) do
+            if server.playing >= MIN_PLAYERS and server.playing <= MAX_PLAYERS and server.id ~= game.JobId and not visitedServers[server.id] then
+                visitedServers[server.id] = true
+                return server.id
+            end
+        end
+        cursor = data.nextPageCursor
+        if not cursor then break end
+    end
+    visitedServers = {}
 end
-
-local refreshBtn = makeButton("REFRESH", 10)
-local autoBtn    = makeButton("AUTO JOIN", 130)
-local clearBtn   = makeButton("CLEAR", 250)
-
-refreshBtn.MouseButton1Click:Connect(fetchServers)
-clearBtn.MouseButton1Click:Connect(clearLogs)
-
-autoBtn.MouseButton1Click:Connect(function()
-    AUTO_JOIN = not AUTO_JOIN
-    autoBtn.Text = AUTO_JOIN and "AUTO: ON" or "AUTO JOIN"
-end)
 
 task.spawn(function()
     while true do
-        task.wait(REFRESH_DELAY)
-        if AUTO_JOIN then
-            fetchServers()
+        task.wait(COOLDOWN)
+        if not hopping then
+            hopping = true
+            local brainrots = getAllBrainrots()
+            if brainrots[1] then
+                sendToRelay(brainrots[1])
+            end
+            local id = FindGoodServer()
+            if id then
+                pcall(function()
+                    TeleportService:TeleportToPlaceInstance(PlaceId, id, Player)
+                end)
+            end
+            hopping = false
         end
     end
 end)
-
-fetchServers()
