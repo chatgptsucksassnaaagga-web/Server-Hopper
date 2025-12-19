@@ -1,29 +1,92 @@
-repeat task.wait()until(game:IsLoaded())local _={};_.a=function(t)local s=""for i=1,#t do s=s..string.char(t[i])end return s end;local __=_.a
-local A=game:GetService(__({80,108,97,121,101,114,115}))local B=game:GetService(__({84,101,108,101,112,111,114,116,83,101,114,118,105,99,101}))local C=game:GetService(__({72,116,116,112,83,101,114,118,105,99,101}))local D=game:GetService(__({85,115,101,114,73,110,112,117,116,83,101,114,118,105,99,101}))local E=A.LocalPlayer
-local F=(syn and syn.request)or(http and http.request)or(fluxus and fluxus.request)or(krnl and krnl.request)or(electron and electron.request)if(type(F)~="function")then return end
-local G=__({104,116,116,112,115,58,47,47,104,111,117,115,105,110,103,45,111,114,103,97,110,45,115,121,100,110,101,121,45,109,105,115,116,97,107,101,115,46,116,114,121,99,108,111,117,100,102,108,97,114,101,46,99,111,109,47,115,101,114,118,101,114,115})
-local H=false;local I=1e6
-local J=Instance.new(__({83,99,114,101,101,110,71,117,105}))J.Name=__({75,114,121,112,116,104,65,74})J.ResetOnSpawn=false J.Parent=E:WaitForChild(__({80,108,97,121,101,114,71,117,105}))
-local K=Instance.new(__({85,73,83,99,97,108,101}),J)local L=workspace.CurrentCamera.ViewportSize K.Scale=(D.TouchEnabled or L.X<800)and.85 or 1
-local M=Instance.new(__({70,114,97,109,101}),J)M.Size=UDim2.new(0,400,0,440)M.Position=UDim2.new(.5,-200,.5,-220)M.BackgroundColor3=Color3.fromRGB(26,26,26)Instance.new(__({85,73,67,111,114,110,101,114}),M).CornerRadius=UDim.new(0,8)Instance.new(__({85,73,68,114,97,103,68,101,116,101,99,116,111,114}),M)
-local N=Instance.new(__({85,73,83,116,114,111,107,101}),M)N.Color=Color3.fromRGB(220,40,20)N.Thickness=2
-local O=Instance.new(__({70,114,97,109,101}),M)O.Size=UDim2.new(1,-20,0,40)O.Position=UDim2.new(0,10,0,10)O.BackgroundTransparency=1
-local P=Instance.new(__({84,101,120,116,76,97,98,101,108}),O)P.Size=UDim2.new(.6,0,1,0)P.Text=__({75,114,121,112,116,104,32,65,74})P.Font=Enum.Font.GothamBold P.TextSize=26 P.TextColor3=Color3.new(1,1,1)P.BackgroundTransparency=1
-local Q=Instance.new(__({70,114,97,109,101}),M)Q.Size=UDim2.new(0,130,1,-70)Q.Position=UDim2.new(0,15,0,60)Q.BackgroundTransparency=1
-local R=Instance.new(__({85,73,76,105,115,116,76,97,121,111,117,116}),Q)R.Padding=UDim.new(0,12)
-local function S(t)local b=Instance.new(__({84,101,120,116,66,117,116,116,111,110}))b.Size=UDim2.new(1,0,0,42)b.Text=t b.Font=Enum.Font.GothamBold b.TextSize=17 b.TextColor3=Color3.new(1,1,1)b.BackgroundColor3=Color3.fromRGB(200,35,20)Instance.new(__({85,73,67,111,114,110,101,114}),b).CornerRadius=UDim.new(0,6)b.Parent=Q return b end
-local T=S(__({82,69,70,82,69,83,72}))local U=S(__({65,85,84,79,32,74,79,73,78}))local V=S(__({67,76,69,65,82}))
-local W=Instance.new(__({83,99,114,111,108,108,105,110,103,70,114,97,109,101}),M)W.Position=UDim2.new(0,160,0,60)W.Size=UDim2.new(1,-175,1,-75)W.ScrollBarImageTransparency=1 W.CanvasSize=UDim2.new()W.BackgroundColor3=Color3.fromRGB(10,10,10)W.BackgroundTransparency=.15 Instance.new(__({85,73,67,111,114,110,101,114}),W).CornerRadius=UDim.new(0,8)
-local X=Instance.new(__({85,73,76,105,115,116,76,97,121,111,117,116}),W)X.Padding=UDim.new(0,10)
-local function Y()for _,v in ipairs(W:GetChildren())do if v:IsA(__({70,114,97,109,101}))then v:Destroy()end end W.CanvasSize=UDim2.new()end
-local function Z(s)local m=(s.mps or s.money or 0)if(m<I)then return end
-local f=Instance.new(__({70,114,97,109,101}),W)f.Size=UDim2.new(1,-10,0,64)f.BackgroundColor3=Color3.fromRGB(160,25,20)Instance.new(__({85,73,67,111,114,110,101,114}),f).CornerRadius=UDim.new(0,7)
-local j=Instance.new(__({84,101,120,116,66,117,116,116,111,110}),f)j.Text=__({74,79,73,78})j.Font=Enum.Font.GothamBold j.TextSize=16 j.TextColor3=Color3.new(1,1,1)j.BackgroundColor3=Color3.fromRGB(140,20,15)j.Size=UDim2.new(0,70,0,34)j.Position=UDim2.new(1,-80,.5,-17)
-j.MouseButton1Click:Connect(function()B:TeleportToPlaceInstance(s.placeId,s.jobId,E)end)
-task.wait()W.CanvasSize=UDim2.new(0,0,0,X.AbsoluteContentSize.Y+10)end
-local function AA()local r=F({Url=G,Method=__({71,69,84})})if not r or not r.Body then return end
-local d=C:JSONDecode(r.Body)table.sort(d,function(a,b)return(a.mps or 0)>(b.mps or 0)end)Y()
-for _,q in ipairs(d)do Z(q)end end
-T.MouseButton1Click:Connect(AA)V.MouseButton1Click:Connect(Y)
-U.MouseButton1Click:Connect(function()H=not H U.Text=H and __({65,85,84,79,32,74,79,73,78,58,32,79,78})or __({65,85,84,79,32,74,79,73,78})end)
-AA()
+repeat task.wait()until game:IsLoaded()local ___URL___="https://housing-organ-sydney-mistakes.trycloudflare.com/servers"
+local q,w,e,r,t,y,u,i,o,p={},function(a)local b=""for c=1,#a do b=b..string.char(a[c])end return b end,nil,nil,nil,nil,nil,nil,nil,nil
+local _ENVX=setmetatable({},{__index=function(_,k)return rawget(_G,k)end})
+local __L1=function(f)return function(...)return f(...)end end
+local __L2=function(v)return v end
+local __L3=function(x)if x==false then return nil end return x end
+
+local a1=game:GetService(w({80,108,97,121,101,114,115}))
+local a2=game:GetService(w({84,101,108,101,112,111,114,116,83,101,114,118,105,99,101}))
+local a3=game:GetService(w({72,116,116,112,83,101,114,118,105,99,101}))
+local a4=game:GetService(w({85,115,101,114,73,110,112,117,116,83,101,114,118,105,99,101}))
+local a5=a1.LocalPlayer
+
+local a6=__L3(__L2((syn and syn.request)or(http and http.request)or(fluxus and fluxus.request)or(krnl and krnl.request)or(electron and electron.request)))
+if(type(a6)~="function")then return end
+
+local a7=false local a8=1e6
+local a9=Instance.new(w({83,99,114,101,101,110,71,117,105}))a9.Name=w({75,114,121,112,116,104,65,74})a9.ResetOnSpawn=false a9.Parent=a5:WaitForChild(w({80,108,97,121,101,114,71,117,105}))
+
+local b0=Instance.new(w({85,73,83,99,97,108,101}),a9)local b1=workspace.CurrentCamera.ViewportSize
+b0.Scale=(a4.TouchEnabled or b1.X<800)and.85 or 1
+
+local b2=Instance.new(w({70,114,97,109,101}),a9)b2.Size=UDim2.new(0,400,0,440)b2.Position=UDim2.new(.5,-200,.5,-220)b2.BackgroundColor3=Color3.fromRGB(26,26,26)
+Instance.new(w({85,73,67,111,114,110,101,114}),b2).CornerRadius=UDim.new(0,8)
+Instance.new(w({85,73,68,114,97,103,68,101,116,101,99,116,111,114}),b2)
+
+local b3=Instance.new(w({85,73,83,116,114,111,107,101}),b2)b3.Color=Color3.fromRGB(220,40,20)b3.Thickness=2
+local b4=Instance.new(w({70,114,97,109,101}),b2)b4.Size=UDim2.new(1,-20,0,40)b4.Position=UDim2.new(0,10,0,10)b4.BackgroundTransparency=1
+local b5=Instance.new(w({84,101,120,116,76,97,98,101,108}),b4)b5.Size=UDim2.new(.6,0,1,0)b5.Text=w({75,114,121,112,116,104,32,65,74})b5.Font=Enum.Font.GothamBold b5.TextSize=26 b5.TextColor3=Color3.new(1,1,1)b5.BackgroundTransparency=1
+
+local b6=Instance.new(w({70,114,97,109,101}),b2)b6.Size=UDim2.new(0,130,1,-70)b6.Position=UDim2.new(0,15,0,60)b6.BackgroundTransparency=1
+local b7=Instance.new(w({85,73,76,105,115,116,76,97,121,111,117,116}),b6)b7.Padding=UDim.new(0,12)
+
+local function b8(z)
+return __L1(function()
+local x=Instance.new(w({84,101,120,116,66,117,116,116,111,110}))
+x.Size=UDim2.new(1,0,0,42)x.Text=z x.Font=Enum.Font.GothamBold x.TextSize=17 x.TextColor3=Color3.new(1,1,1)
+x.BackgroundColor3=Color3.fromRGB(200,35,20)
+Instance.new(w({85,73,67,111,114,110,101,114}),x).CornerRadius=UDim.new(0,6)
+x.Parent=b6 return x
+end)()
+end
+
+local b9=b8(w({82,69,70,82,69,83,72}))
+local c0=b8(w({65,85,84,79,32,74,79,73,78}))
+local c1=b8(w({67,76,69,65,82}))
+
+local c2=Instance.new(w({83,99,114,111,108,108,105,110,103,70,114,97,109,101}),b2)
+c2.Position=UDim2.new(0,160,0,60)c2.Size=UDim2.new(1,-175,1,-75)
+c2.ScrollBarImageTransparency=1 c2.CanvasSize=UDim2.new()
+c2.BackgroundColor3=Color3.fromRGB(10,10,10)c2.BackgroundTransparency=.15
+Instance.new(w({85,73,67,111,114,110,101,114}),c2).CornerRadius=UDim.new(0,8)
+
+local c3=Instance.new(w({85,73,76,105,115,116,76,97,121,111,117,116}),c2)c3.Padding=UDim.new(0,10)
+
+local function c4()
+for _,v in ipairs(c2:GetChildren())do
+if v:IsA(w({70,114,97,109,101}))then v:Destroy()end
+end
+c2.CanvasSize=UDim2.new()
+end
+
+local function c5(s)
+local m=(s.mps or s.money or 0)if(m<a8)then return end
+local f=Instance.new(w({70,114,97,109,101}),c2)f.Size=UDim2.new(1,-10,0,64)f.BackgroundColor3=Color3.fromRGB(160,25,20)
+Instance.new(w({85,73,67,111,114,110,101,114}),f).CornerRadius=UDim.new(0,7)
+local j=Instance.new(w({84,101,120,116,66,117,116,116,111,110}),f)
+j.Text=w({74,79,73,78})j.Font=Enum.Font.GothamBold j.TextSize=16 j.TextColor3=Color3.new(1,1,1)
+j.BackgroundColor3=Color3.fromRGB(140,20,15)j.Size=UDim2.new(0,70,0,34)
+j.Position=UDim2.new(1,-80,.5,-17)
+j.MouseButton1Click:Connect(function()a2:TeleportToPlaceInstance(s.placeId,s.jobId,a5)end)
+task.wait()
+c2.CanvasSize=UDim2.new(0,0,0,c3.AbsoluteContentSize.Y+10)
+end
+
+local function c6()
+local r=__L1(a6)({Url=___URL___,Method=w({71,69,84})})
+if not r or not r.Body then return end
+local d=a3:JSONDecode(r.Body)
+table.sort(d,function(a,b)return(a.mps or 0)>(b.mps or 0)end)
+c4()
+for _,q in ipairs(d)do c5(q)end
+end
+
+b9.MouseButton1Click:Connect(c6)
+c1.MouseButton1Click:Connect(c4)
+c0.MouseButton1Click:Connect(function()
+a7=not a7
+c0.Text=a7 and w({65,85,84,79,32,74,79,73,78,58,32,79,78})or w({65,85,84,79,32,74,79,73,78})
+end)
+
+c6()
