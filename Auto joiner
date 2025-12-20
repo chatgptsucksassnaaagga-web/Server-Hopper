@@ -1,22 +1,8 @@
-print("====================")
-print("Krypth Unified Notifier")
-print("====================")
+-- =====================================
+-- Krypth BOT (SERVER HOP + RELAY SENDER)
+-- =====================================
 
--- ===== CONFIG =====
-local RELAY_SUBMIT = "https://sunglasses-camping-onion-kills.trycloudflare.com/submit" -- Ensure this is set correctly
-local KRYPT_H_TITLE = "Krypth the best AJ"
-
-local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1449060869807018067/aoX36ml0daetyxDffQ72JF3Xg-hZ_iCAH-bjdBwB4c7Vd28KxQA44tGTYIlBa87pKJD5"
-local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1449537390493433936/4QnFTdbekAq9lPnk-gHeB8OzXEsDxCOlqiAeSc3lO8ZlwLyWYZ_KIWSbBbWpEQIv_TkC"
-local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1449537664997920889/zhV1rBRLRngGNXiwjX5VmzAiA-4DrpLyqjbSmBhV4rpzP2lUh030IdgGZQBcgT09fvHv"
-local WEBHOOK_HIGHLIGHTS = "https://discord.com/api/webhooks/1449599347099566111/xQfLqvjxYf0PRxwFx1_bULun8C8cSMTOQi3Y4WHiX0RwC8HxYHEl6OG0POCPk6g24Yj"
-
-local MIN_PLAYERS = 2
-local MAX_PLAYERS = 7
-local COOLDOWN = 6
-local SEND_DELAY = 2
-local MAX_SERVER_PAGES = 5
-local SCAN_CACHE_TIME = 5
+repeat task.wait() until game:IsLoaded()
 
 -- ===== SERVICES =====
 local Players = game:GetService("Players")
@@ -25,170 +11,154 @@ local HttpService = game:GetService("HttpService")
 local Player = Players.LocalPlayer
 local PlaceId = game.PlaceId
 
--- ===== REQUEST =====
-local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request)
+-- ===== HTTP =====
+local request =
+    (syn and syn.request) or
+    (http and http.request) or
+    (fluxus and fluxus.request) or
+    (krnl and krnl.request) or
+    (electron and electron.request)
 
-if type(request) ~= "function" then return end
-
--- ===== STATE =====
-local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12,Q=1e15}
-local visitedServers = {}
-local hopping = false
-local sending = false
-local webhookQueue = {}
-
-local lastScan = 0
-local cachedBrainrots = {}
-
--- ===== UTILS =====
-local function parseMoney(str)
-    if not str then return 0 end
-    str = tostring(str):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
-    local num,unit = str:match("([%d%.]+)(%a?)")
-    return (tonumber(num) or 0) * (multipliers[unit] or 1)
+if type(request) ~= "function" then
+    warn("HTTP unsupported")
+    return
 end
 
-local function formatNumber(n)
-    local s = tostring(math.floor(n))
-    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
+-- ===== CONFIG =====
+local RELAY_SUBMIT = "https://operational-wheel-frames-editorials.trycloudflare.com/submit"
+
+local HOP_DELAY = 6
+local SCAN_DELAY = 5
+local MAX_PAGES = 6
+local MIN_MPS = 1e6
+
+-- ===== STATE =====
+local visited = {}
+local hopping = false
+local lastSubmit = 0
+
+-- ===== UTILS =====
+local multipliers = {
+    K = 1e3,
+    M = 1e6,
+    B = 1e9,
+    T = 1e12,
+    Q = 1e15
+}
+
+local function parseMoney(text)
+    if not text then return 0 end
+    text = tostring(text):gsub("%$",""):gsub("/s",""):gsub("%s+","")
+    local num, unit = text:match("([%d%.]+)(%a?)")
+    return (tonumber(num) or 0) * (multipliers[unit] or 1)
 end
 
 -- ===== BRAINROT SCAN =====
 local function scanBrainrots()
-    local scanned, list = {}, {}
+    local best = nil
     local plots = workspace:FindFirstChild("Plots")
-    if not plots then return list end
+    if not plots then return nil end
 
     for _,plot in ipairs(plots:GetChildren()) do
-        task.wait()
         for _,obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
-                local bb = obj.Parent
-                if bb and not scanned[bb] then
-                    scanned[bb] = true
-                    local d = obj:FindFirstChild("DisplayName")
-                    local g = obj:FindFirstChild("Generation")
-                    local mps = parseMoney(g and (g.Text or g.Value))
-                    if mps > 0 then
-                        table.insert(list,{
-                            Name = d and (d.Text or d.Value) or "Unknown",
+                local gen = obj:FindFirstChild("Generation")
+                local disp = obj:FindFirstChild("DisplayName")
+                local mps = parseMoney(gen and (gen.Text or gen.Value))
+
+                if mps >= MIN_MPS then
+                    if not best or mps > best.MPS then
+                        best = {
+                            Name = disp and (disp.Text or disp.Value) or "Unknown",
                             MPS = mps
-                        })
+                        }
                     end
                 end
             end
         end
     end
 
-    table.sort(list,function(a,b) return a.MPS>b.MPS end)
-    return list
+    return best
 end
 
-local function getAllBrainrots()
-    if os.clock() - lastScan < SCAN_CACHE_TIME then
-        return cachedBrainrots
-    end
-    lastScan = os.clock()
-    cachedBrainrots = scanBrainrots()
-    return cachedBrainrots
-end
+-- ===== RELAY SUBMIT =====
+local function submit(best)
+    if not best then return end
+    if os.clock() - lastSubmit < 5 then return end
+    lastSubmit = os.clock()
 
--- ===== WEBHOOK QUEUE =====
-local function queueWebhook(url, embed, prio)
-    table.insert(webhookQueue,{url=url,embed=embed,prio=prio or 0})
-    table.sort(webhookQueue,function(a,b) return a.prio>b.prio end)
-end
-
-local function processQueue()
-    if sending then return end
-    sending = true
-
-    while #webhookQueue > 0 do
-        local w = table.remove(webhookQueue,1)
+    task.spawn(function()
         pcall(function()
             request({
-                Url = w.url,
+                Url = RELAY_SUBMIT,
                 Method = "POST",
-                Headers = {["Content-Type"]="application/json"},
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
                 Body = HttpService:JSONEncode({
-                    username = KRYPT_H_TITLE,
-                    embeds = {w.embed}
+                    brainrot = best.Name,
+                    mps = best.MPS,
+                    placeId = PlaceId,
+                    jobId = game.JobId,
+                    players = #Players:GetPlayers(),
+                    maxPlayers = Players.MaxPlayers
                 })
             })
+            print("[BOT] SENT:", best.Name, best.MPS)
         end)
-        task.wait(SEND_DELAY)
-    end
-
-    sending = false
+    end)
 end
 
--- ===== EMBEDS =====
-local function buildMainEmbed(brainrots)
-    local lines = {}
-    for i,b in ipairs(brainrots) do
-        local icon = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-        table.insert(lines, icon.." "..b.Name.." — $"..formatNumber(b.MPS).."/s")
-    end
+-- ===== SERVER HOP =====
+local function getServers(cursor)
+    local url =
+        "https://games.roblox.com/v1/games/" ..
+        PlaceId ..
+        "/servers/Public?sortOrder=Desc&limit=100" ..
+        (cursor and "&cursor="..cursor or "")
 
-    local best = brainrots[1]
-    local link = "https://chillihub1.github.io/chillihub-joiner/?placeId="..PlaceId.."&gameInstanceId="..game.JobId
-
-    return {
-        title = "1x "..best.Name.." ($"..formatNumber(best.MPS).."/s)",
-        color = 0x2B2D31,
-        fields = {
-            {name="🧩 Pet",value="```"..best.Name.." — $"..formatNumber(best.MPS).."/s```"},
-            {name="🆔 Server ID",value="```"..game.JobId.."```"},
-            {name="📜 Join Script",value="```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance("..PlaceId..", \""..game.JobId.."\", game.Players.LocalPlayer)\n```"},
-            {name="🔗 Join Link",value="[Join Server]("..link..")"},
-            {name="👥 Players",value="```"..#Players:GetPlayers().."/"..Players.MaxPlayers.."```"},
-            {name="🧱 Brainrots",value="```"..table.concat(lines,"\n").."```"}
-        },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    }
+    local res = request({ Url = url, Method = "GET" })
+    if not res or not res.Body then return end
+    return HttpService:JSONDecode(res.Body)
 end
 
-local function buildHighlightEmbed(best)
-    return {
-        title = "Krypth | Highlights",
-        color = 0xFFD700,
-        fields = {
-            {name="💰 Top", value="```"..best.Name.." — $"..formatNumber(best.MPS).."/s```"}
-        },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    }
-end
+local function hop()
+    if hopping then return end
+    hopping = true
 
-local function buildEmbeds(brainrots)
-    local best = brainrots[1]
-    if not best then return end
+    local cursor = nil
 
-    local main = buildMainEmbed(brainrots)
-    local highlight = buildHighlightEmbed(best)
+    for _ = 1, MAX_PAGES do
+        local data = getServers(cursor)
+        if not data or not data.data then break end
 
-    if best.MPS < 1e7 then
-        queueWebhook(WEBHOOK_1M_10M, main, best.MPS)
-    elseif best.MPS < 1e8 then
-        queueWebhook(WEBHOOK_10M_100M, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, highlight, best.MPS)
-    else
-        queueWebhook(WEBHOOK_100M_INF, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, highlight, best.MPS)
+        for _,s in ipairs(data.data) do
+            if s.playing < s.maxPlayers and not visited[s.id] then
+                visited[s.id] = true
+                TeleportService:TeleportToPlaceInstance(PlaceId, s.id, Player)
+                return
+            end
+        end
+
+        cursor = data.nextPageCursor
+        if not cursor then break end
     end
+
+    hopping = false
 end
 
 -- ===== MAIN LOOP =====
 task.spawn(function()
-    while task.wait(COOLDOWN) do
-        if hopping then continue end
-        hopping = true
-
-        local brainrots = getAllBrainrots()
-        if brainrots[1] then
-            buildEmbeds(brainrots)
-            task.spawn(processQueue)
+    while task.wait(SCAN_DELAY) do
+        local best = scanBrainrots()
+        if best then
+            submit(best)
         end
+    end
+end)
 
-        hopping = false
+task.spawn(function()
+    while task.wait(HOP_DELAY) do
+        hop()
     end
 end)
