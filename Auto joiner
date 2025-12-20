@@ -1,5 +1,5 @@
 -- =====================================
--- Krypth BOT (SERVER HOP + RELAY SENDER)
+-- Krypth BOT (SCAN + SEND + SERVER HOP)
 -- =====================================
 
 repeat task.wait() until game:IsLoaded()
@@ -19,16 +19,13 @@ local request =
     (krnl and krnl.request) or
     (electron and electron.request)
 
-if type(request) ~= "function" then
-    warn("HTTP unsupported")
-    return
-end
+if type(request) ~= "function" then return end
 
 -- ===== CONFIG =====
 local RELAY_SUBMIT = "https://operational-wheel-frames-editorials.trycloudflare.com/submit"
 
-local HOP_DELAY = 6
 local SCAN_DELAY = 5
+local HOP_DELAY = 8
 local MAX_PAGES = 6
 local MIN_MPS = 1e6
 
@@ -48,13 +45,18 @@ local multipliers = {
 
 local function parseMoney(text)
     if not text then return 0 end
-    text = tostring(text):gsub("%$",""):gsub("/s",""):gsub("%s+","")
+    text = tostring(text)
+        :gsub("%$","")
+        :gsub("/s","")
+        :gsub("Generation","")
+        :gsub("%s+","")
+
     local num, unit = text:match("([%d%.]+)(%a?)")
     return (tonumber(num) or 0) * (multipliers[unit] or 1)
 end
 
 -- ===== BRAINROT SCAN =====
-local function scanBrainrots()
+local function scanBestBrainrot()
     local best = nil
     local plots = workspace:FindFirstChild("Plots")
     if not plots then return nil end
@@ -64,8 +66,8 @@ local function scanBrainrots()
             if obj.Name == "AnimalOverhead" then
                 local gen = obj:FindFirstChild("Generation")
                 local disp = obj:FindFirstChild("DisplayName")
-                local mps = parseMoney(gen and (gen.Text or gen.Value))
 
+                local mps = parseMoney(gen and (gen.Text or gen.Value))
                 if mps >= MIN_MPS then
                     if not best or mps > best.MPS then
                         best = {
@@ -81,10 +83,10 @@ local function scanBrainrots()
     return best
 end
 
--- ===== RELAY SUBMIT =====
+-- ===== RELAY SEND =====
 local function submit(best)
     if not best then return end
-    if os.clock() - lastSubmit < 5 then return end
+    if os.clock() - lastSubmit < 4 then return end
     lastSubmit = os.clock()
 
     task.spawn(function()
@@ -109,7 +111,7 @@ local function submit(best)
     end)
 end
 
--- ===== SERVER HOP =====
+-- ===== SERVER LIST =====
 local function getServers(cursor)
     local url =
         "https://games.roblox.com/v1/games/" ..
@@ -122,7 +124,8 @@ local function getServers(cursor)
     return HttpService:JSONDecode(res.Body)
 end
 
-local function hop()
+-- ===== SERVER HOP =====
+local function hopServer()
     if hopping then return end
     hopping = true
 
@@ -135,7 +138,11 @@ local function hop()
         for _,s in ipairs(data.data) do
             if s.playing < s.maxPlayers and not visited[s.id] then
                 visited[s.id] = true
-                TeleportService:TeleportToPlaceInstance(PlaceId, s.id, Player)
+                TeleportService:TeleportToPlaceInstance(
+                    PlaceId,
+                    s.id,
+                    Player
+                )
                 return
             end
         end
@@ -147,10 +154,10 @@ local function hop()
     hopping = false
 end
 
--- ===== MAIN LOOP =====
+-- ===== LOOPS =====
 task.spawn(function()
     while task.wait(SCAN_DELAY) do
-        local best = scanBrainrots()
+        local best = scanBestBrainrot()
         if best then
             submit(best)
         end
@@ -159,6 +166,6 @@ end)
 
 task.spawn(function()
     while task.wait(HOP_DELAY) do
-        hop()
+        hopServer()
     end
 end)
