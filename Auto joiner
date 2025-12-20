@@ -1,254 +1,194 @@
 print("====================")
-print("Krypth Notifier")
+print("Krypth Unified Notifier")
 print("====================")
 
+-- ===== CONFIG =====
+local RELAY_SUBMIT = "https://sunglasses-camping-onion-kills.trycloudflare.com/submit" -- Ensure this is set correctly
 local KRYPT_H_TITLE = "Krypth the best AJ"
 
--- Webhook URLs for different MPS ranges
 local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1449060869807018067/aoX36ml0daetyxDffQ72JF3Xg-hZ_iCAH-bjdBwB4c7Vd28KxQA44tGTYIlBa87pKJD5"
 local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1449537390493433936/4QnFTdbekAq9lPnk-gHeB8OzXEsDxCOlqiAeSc3lO8ZlwLyWYZ_KIWSbBbWpEQIv_TkC"
 local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1449537664997920889/zhV1rBRLRngGNXiwjX5VmzAiA-4DrpLyqjbSmBhV4rpzP2lUh030IdgGZQBcgT09fvHv"
-local WEBHOOK_HIGHLIGHTS = "https://discord.com/api/webhooks/1449599347099566111/xQfLqvjxYfJ0PRxwFx1_bULun8C8cSMTOQi3Y4WHiX0RwC8HxYHEl6OG0POCPk6g24Yj"
-
--- Relay URL
-local RELAY_URL = "https://sunglasses-camping-onion-kills.trycloudflare.com/submit"  -- Replace with your actual relay URL
-
-local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request) or request
-if not request then return end
-
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local Player = Players.LocalPlayer
-local TeleportService = game:GetService("TeleportService")
-
-local multipliers = {K=1e3, M=1e6, B=1e9, T=1e12, Q=1e15}
+local WEBHOOK_HIGHLIGHTS = "https://discord.com/api/webhooks/1449599347099566111/xQfLqvjxYf0PRxwFx1_bULun8C8cSMTOQi3Y4WHiX0RwC8HxYHEl6OG0POCPk6g24Yj"
 
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 7
 local COOLDOWN = 6
 local SEND_DELAY = 2
+local MAX_SERVER_PAGES = 5
+local SCAN_CACHE_TIME = 5
 
-local hopping = false
-local sending = false
-local visitedServers = {}
+-- ===== SERVICES =====
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Player = Players.LocalPlayer
 local PlaceId = game.PlaceId
 
+-- ===== REQUEST =====
+local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or (electron and electron.request)
+
+if type(request) ~= "function" then return end
+
+-- ===== STATE =====
+local multipliers = {K=1e3,M=1e6,B=1e9,T=1e12,Q=1e15}
+local visitedServers = {}
+local hopping = false
+local sending = false
 local webhookQueue = {}
 
--- Function to make an HTTP GET request
-local function httpGet(url)
-    local ok, res = pcall(function() return game:HttpGet(url) end)
-    if ok then return res end
-    local r = request({Url=url, Method="GET"})
-    return r and r.Body or nil
-end
+local lastScan = 0
+local cachedBrainrots = {}
 
--- Function to format numbers with commas
-local function formatNumber(n)
-    n = math.floor(n)
-    local s = tostring(n)
-    local f = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    if f:sub(1,1) == "," then f = f:sub(2) end
-    return f
-end
-
--- Function to parse money strings into numbers
+-- ===== UTILS =====
 local function parseMoney(str)
     if not str then return 0 end
     str = tostring(str):gsub("%$",""):gsub("/s",""):gsub("Generation",""):gsub("%s+","")
-    local number, unit = str:match("([%d%.]+)(%a?)")
-    local n = tonumber(number) or 0
-    return n * (multipliers[unit] or 1)
+    local num,unit = str:match("([%d%.]+)(%a?)")
+    return (tonumber(num) or 0) * (multipliers[unit] or 1)
 end
 
--- Function to queue a webhook request
-local function queueWebhook(url, embed, priority)
-    table.insert(webhookQueue, {url=url, embed=embed, priority=priority or 0})
-    table.sort(webhookQueue, function(a,b) return a.priority > b.priority end)
+local function formatNumber(n)
+    local s = tostring(math.floor(n))
+    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
 end
 
--- Function to process the webhook queue
-local function processQueue()
-    if sending then return end
-    sending = true
-    while #webhookQueue > 0 do
-        local item = table.remove(webhookQueue, 1)
-        local payload = HttpService:JSONEncode({username=KRYPT_H_TITLE, embeds={item.embed}})
-        pcall(function()
-            request({Url=item.url, Method="POST", Headers={["Content-Type"]="application/json"}, Body=payload})
-        end)
-        task.wait(SEND_DELAY)
-    end
-    sending = false
-end
-
--- Function to get all brainrots (players with high MPS)
-local function getAllBrainrots()
-    local scanned = {}
-    local list = {}
+-- ===== BRAINROT SCAN =====
+local function scanBrainrots()
+    local scanned, list = {}, {}
     local plots = workspace:FindFirstChild("Plots")
     if not plots then return list end
+
     for _,plot in ipairs(plots:GetChildren()) do
+        task.wait()
         for _,obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
                 local bb = obj.Parent
-                if bb then
-                    local key = bb:GetFullName()
-                    if not scanned[key] then
-                        scanned[key] = true
-                        local d = obj:FindFirstChild("DisplayName")
-                        local g = obj:FindFirstChild("Generation")
-                        local name = d and (d.Text or d.Value) or "Unknown"
-                        local gen = g and (g.Text or g.Value) or "0"
-                        local mps = parseMoney(gen)
-                        if mps >= 1e6 then
-                            table.insert(list,{Name=name,MPS=mps})
-                        end
+                if bb and not scanned[bb] then
+                    scanned[bb] = true
+                    local d = obj:FindFirstChild("DisplayName")
+                    local g = obj:FindFirstChild("Generation")
+                    local mps = parseMoney(g and (g.Text or g.Value))
+                    if mps > 0 then
+                        table.insert(list,{
+                            Name = d and (d.Text or d.Value) or "Unknown",
+                            MPS = mps
+                        })
                     end
                 end
             end
         end
     end
+
     table.sort(list,function(a,b) return a.MPS>b.MPS end)
     return list
 end
 
--- Function to build the main embed for the brainrot leaderboard
+local function getAllBrainrots()
+    if os.clock() - lastScan < SCAN_CACHE_TIME then
+        return cachedBrainrots
+    end
+    lastScan = os.clock()
+    cachedBrainrots = scanBrainrots()
+    return cachedBrainrots
+end
+
+-- ===== WEBHOOK QUEUE =====
+local function queueWebhook(url, embed, prio)
+    table.insert(webhookQueue,{url=url,embed=embed,prio=prio or 0})
+    table.sort(webhookQueue,function(a,b) return a.prio>b.prio end)
+end
+
+local function processQueue()
+    if sending then return end
+    sending = true
+
+    while #webhookQueue > 0 do
+        local w = table.remove(webhookQueue,1)
+        pcall(function()
+            request({
+                Url = w.url,
+                Method = "POST",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode({
+                    username = KRYPT_H_TITLE,
+                    embeds = {w.embed}
+                })
+            })
+        end)
+        task.wait(SEND_DELAY)
+    end
+
+    sending = false
+end
+
+-- ===== EMBEDS =====
 local function buildMainEmbed(brainrots)
     local lines = {}
     for i,b in ipairs(brainrots) do
         local icon = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
         table.insert(lines, icon.." "..b.Name.." — $"..formatNumber(b.MPS).."/s")
     end
+
     local best = brainrots[1]
-    local link = "https://chillihub1.github.io/chillihub-joiner/?placeId="..game.PlaceId.."&gameInstanceId="..game.JobId
+    local link = "https://chillihub1.github.io/chillihub-joiner/?placeId="..PlaceId.."&gameInstanceId="..game.JobId
+
     return {
-        title="1x "..best.Name.." ($"..formatNumber(best.MPS).."/s)",
-        color=0x2B2D31,
-        fields={
+        title = "1x "..best.Name.." ($"..formatNumber(best.MPS).."/s)",
+        color = 0x2B2D31,
+        fields = {
             {name="🧩 Pet",value="```"..best.Name.." — $"..formatNumber(best.MPS).."/s```"},
             {name="🆔 Server ID",value="```"..game.JobId.."```"},
-            {name="📜 Join Script",value="```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance("..game.PlaceId..", \""..game.JobId.."\", game.Players.LocalPlayer)\n```"},
+            {name="📜 Join Script",value="```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance("..PlaceId..", \""..game.JobId.."\", game.Players.LocalPlayer)\n```"},
             {name="🔗 Join Link",value="[Join Server]("..link..")"},
             {name="👥 Players",value="```"..#Players:GetPlayers().."/"..Players.MaxPlayers.."```"},
             {name="🧱 Brainrots",value="```"..table.concat(lines,"\n").."```"}
         },
-        timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
     }
 end
 
--- Function to build the highlight embed (secondary leaderboard)
-local function buildHighlightEmbed(brainrots)
-    local best = brainrots[1]
-    local rest = {}
-    for i=2,#brainrots do
-        table.insert(rest, brainrots[i].Name.." — $"..formatNumber(brainrots[i].MPS).."/s")
-    end
+local function buildHighlightEmbed(best)
     return {
-        title="Krypth | HighLights",
-        color=0xFFD700,
-        fields={
-            {name="💰 Top Brainrot",value="```"..best.Name.." — $"..formatNumber(best.MPS).."/s```"},
-            {name="🧱 Other Brainrots",value="```"..table.concat(rest,"\n").."```"}
+        title = "Krypth | Highlights",
+        color = 0xFFD700,
+        fields = {
+            {name="💰 Top", value="```"..best.Name.." — $"..formatNumber(best.MPS).."/s```"}
         },
-        timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
     }
 end
 
--- Function to route brainrots to the appropriate webhooks
-local function routeBrainrots(brainrots)
-    if #brainrots == 0 then return end
+local function buildEmbeds(brainrots)
     local best = brainrots[1]
+    if not best then return end
+
     local main = buildMainEmbed(brainrots)
-    local hi = buildHighlightEmbed(brainrots)
-    
-    -- Send to the appropriate webhook based on MPS
+    local highlight = buildHighlightEmbed(best)
+
     if best.MPS < 1e7 then
         queueWebhook(WEBHOOK_1M_10M, main, best.MPS)
     elseif best.MPS < 1e8 then
         queueWebhook(WEBHOOK_10M_100M, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)
+        queueWebhook(WEBHOOK_HIGHLIGHTS, highlight, best.MPS)
     else
         queueWebhook(WEBHOOK_100M_INF, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)
+        queueWebhook(WEBHOOK_HIGHLIGHTS, highlight, best.MPS)
     end
-    -- Send the webhook requests
-    processQueue()
-    
-    -- Send data to the relay URL (this was the missing part)
-    pcall(function()
-        local data = {
-            brainrot = brainrots[1].Name,  -- Assuming the first brainrot has the highest MPS
-            money = brainrots[1].MPS,
-            mps = brainrots[1].MPS,
-            placeId = game.PlaceId,
-            jobId = game.JobId,
-            players = #Players:GetPlayers(),
-            maxPlayers = Players.MaxPlayers
-        }
-        local payload = HttpService:JSONEncode(data)
-        
-        -- Send the request to the relay server
-        local response = request({
-            Url = RELAY_URL,
-            Method = "POST",
-            Body = payload,
-            Headers = {["Content-Type"]="application/json"}
-        })
-        
-        -- Check for the response status
-        if response and response.StatusCode ~= 200 then
-            warn("Failed to send data to relay URL. Status: " .. response.StatusCode)
-        end
-    end)
 end
 
--- Function to get available servers from the API
-local function GetServers(cursor)
-    local url = "https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
-    if cursor then url = url.."&cursor="..cursor end
-    local body = httpGet(url)
-    if not body then return nil end
-    local data = HttpService:JSONDecode(body)
-    if not data or type(data.data) ~= "table" then
-        data = {data={}}
-    end
-    return data
-end
-
--- Function to find a good server to teleport to
-local function FindGoodServer()
-    local cursor
-    while true do
-        local data = GetServers(cursor)
-        if not data then break end
-        for _,server in ipairs(data.data) do
-            if server.playing >= MIN_PLAYERS and server.playing <= MAX_PLAYERS and server.id ~= game.JobId and not visitedServers[server.id] then
-                visitedServers[server.id] = true
-                return server.id
-            end
-        end
-        cursor = data.nextPageCursor
-        if not cursor then break end
-    end
-    visitedServers = {}
-end
-
--- Main loop for sending notifications and hopping servers
+-- ===== MAIN LOOP =====
 task.spawn(function()
-    while true do
-        task.wait(COOLDOWN)
-        if not hopping then
-            hopping = true
-            local brainrots = getAllBrainrots()
-            routeBrainrots(brainrots)
-            local id = FindGoodServer()
-            if id then
-                pcall(function()
-                    TeleportService:TeleportToPlaceInstance(PlaceId, id, Player)
-                end)
-            end
-            hopping = false
+    while task.wait(COOLDOWN) do
+        if hopping then continue end
+        hopping = true
+
+        local brainrots = getAllBrainrots()
+        if brainrots[1] then
+            buildEmbeds(brainrots)
+            task.spawn(processQueue)
         end
+
+        hopping = false
     end
 end)
