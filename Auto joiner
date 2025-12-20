@@ -22,7 +22,7 @@ local request =
 if type(request) ~= "function" then return end
 
 -- ===== CONFIG =====
-local RELAY_SUBMIT = "https://operational-wheel-frames-editorials.trycloudflare.com/submit"
+local RELAY_SUBMIT = "https://sellers-friends-cleaning-organisms.trycloudflare.com/submit"
 
 local SCAN_DELAY = 5
 local HOP_DELAY = 8
