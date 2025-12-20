@@ -175,16 +175,26 @@ local function routeBrainrots(brainrots)
     -- Send the webhook requests
     processQueue()
     
-    -- Send data to the relay URL (this was the missing part)
-    pcall(function()
+    -- Send data to the relay URL
+    local success, errorMsg = pcall(function()
         local data = {
             brainrots = brainrots,
             serverId = game.JobId,
             placeId = game.PlaceId,
         }
         local payload = HttpService:JSONEncode(data)
-        request({Url=RELAY_URL, Method="POST", Body=payload, Headers={["Content-Type"]="application/json"}})
+        local response = request({Url=RELAY_URL, Method="POST", Body=payload, Headers={["Content-Type"]="application/json"}})
+        
+        -- Check for response status and log errors
+        if response and response.StatusCode ~= 200 then
+            warn("Failed to send data to relay URL. Status: "..response.StatusCode)
+        end
     end)
+
+    -- Error handling for the relay POST request
+    if not success then
+        warn("Error sending to relay URL: "..errorMsg)
+    end
 end
 
 -- Function to get available servers from the API
