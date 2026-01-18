@@ -18,7 +18,7 @@ local RELAY_URL = "https://unified-maker-caribbean-infrastructure.trycloudflare.
 local THRESHOLD = 1e6
 local COOLDOWN = 6
 local SEND_DELAY = 2
-local MAX_HOPS = 50
+local MAX_HOPS = 999
 
 local function formatNumber(num)
     if num >= 1e9 then return string.format("%.2fB", num/1e9)
