@@ -1,171 +1,259 @@
--- =====================================
--- Krypth BOT (SCAN + SEND + SERVER HOP)
--- =====================================
-
-repeat task.wait() until game:IsLoaded()
-
--- ===== SERVICES =====
+local RUNS_CONFIG = 1500
+local Webhook1M = "https://discord.com/api/webhooks/1459664881115598989/CU9z_04a9bfSrlqG00HgHWr68p3zwZMU9QchBPRJHy6TSdTdvWkniu0lel6p7DqYRgCs"
+local Webhook10M = "https://discord.com/api/webhooks/1459664906939928812/jwLTDHnvUmXikXPF3XJoGROc32j_-4gFaA8pvTfN52JZ1pXJAaVf6Sdm_xSHIDmw-qXo"
+local Webhook100M = "https://discord.com/api/webhooks/1459664937835302914/mQ789B2Jd8bg7H-WWODAP1wEYNbCbY-Oi-g7ng9xsUFtapEcqMkV5_kQhe2Z1eu0t4Wv"
+local WebhookHighlights = "https://discord.com/api/webhooks/1459664960803311698/sYEl1nx3fwOzwa0Z4WhyM2SSChnRcWuOLju29WJwI46dYsTJhyLM1BAiIHRqj2OEhp3-"
+local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
-local Player = Players.LocalPlayer
-local PlaceId = game.PlaceId
+local Debris = Workspace:WaitForChild("Debris")
+local PLACE_ID = game.PlaceId
+local THRESHOLD = 1e6
 
--- ===== HTTP =====
-local request =
-    (syn and syn.request) or
-    (http and http.request) or
-    (fluxus and fluxus.request) or
-    (krnl and krnl.request) or
-    (electron and electron.request)
+local request = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or request or http_request or function(tab) return {Success=true, StatusCode=200} end
 
-if type(request) ~= "function" then return end
+local teleportData = TeleportService:GetLocalPlayerTeleportData() or {}
+teleportData.visitedServers = teleportData.visitedServers or {}
+teleportData.reportedServers = teleportData.reportedServers or {}
+teleportData.visitedServers[game.JobId] = true
 
--- ===== CONFIG =====
-local RELAY_SUBMIT = "https://pennsylvania-interested-imperial-procedures.trycloudflare.com/submit"
-
-local SCAN_DELAY = 5
-local HOP_DELAY = 8
-local MAX_PAGES = 6
-local MIN_MPS = 1e6
-
--- ===== STATE =====
-local visited = {}
-local hopping = false
-local lastSubmit = 0
-
--- ===== UTILS =====
-local multipliers = {
-    K = 1e3,
-    M = 1e6,
-    B = 1e9,
-    T = 1e12,
-    Q = 1e15
-}
-
-local function parseMoney(text)
-    if not text then return 0 end
-    text = tostring(text)
-        :gsub("%$","")
-        :gsub("/s","")
-        :gsub("Generation","")
-        :gsub("%s+","")
-
-    local num, unit = text:match("([%d%.]+)(%a?)")
-    return (tonumber(num) or 0) * (multipliers[unit] or 1)
+local function formatNumber(num)
+    if num >= 1e9 then return string.format("%.2fB", num / 1e9) end
+    if num >= 1e6 then return string.format("%.2fM", num / 1e6) end
+    if num >= 1e3 then return string.format("%.2fK", num / 1e3) end
+    return tostring(num)
 end
 
--- ===== BRAINROT SCAN =====
-local function scanBestBrainrot()
-    local best = nil
-    local plots = workspace:FindFirstChild("Plots")
-    if not plots then return nil end
+local function parseGeneration(text)
+    if type(text) ~= "string" then return nil end
+    local cleaned = text:lower():gsub("%$", ""):gsub("/s", ""):gsub(",", ""):gsub("%s+", "")
+    local mult = 1
+    local suffix = cleaned:sub(-1)
+    if suffix == "k" then
+        mult = 1e3
+        cleaned = cleaned:sub(1, -2)
+    elseif suffix == "m" then
+        mult = 1e6
+        cleaned = cleaned:sub(1, -2)
+    elseif suffix == "b" then
+        mult = 1e9
+        cleaned = cleaned:sub(1, -2)
+    end
+    local num = tonumber(cleaned)
+    if not num then return nil end
+    return num * mult
+end
 
-    for _,plot in ipairs(plots:GetChildren()) do
-        for _,obj in ipairs(plot:GetDescendants()) do
-            if obj.Name == "AnimalOverhead" then
-                local gen = obj:FindFirstChild("Generation")
-                local disp = obj:FindFirstChild("DisplayName")
-
-                local mps = parseMoney(gen and (gen.Text or gen.Value))
-                if mps >= MIN_MPS then
-                    if not best or mps > best.MPS then
-                        best = {
-                            Name = disp and (disp.Text or disp.Value) or "Unknown",
-                            MPS = mps
+local function scanBrainrots()
+    local results = {}
+    local children = Debris:GetChildren()
+    for i = 1, #children do
+        local item = children[i]
+        if item.Name == "FastOverheadTemplate" then
+            local overhead = item:FindFirstChild("AnimalOverhead")
+            if overhead then
+                local nameLabel = overhead:FindFirstChild("DisplayName")
+                local genLabel = overhead:FindFirstChild("Generation")
+                if nameLabel and genLabel and nameLabel:IsA("TextLabel") and genLabel:IsA("TextLabel") then
+                    local mps = parseGeneration(genLabel.Text)
+                    if mps and mps >= THRESHOLD then
+                        results[#results + 1] = {
+                            Name = nameLabel.Text or "Unknown",
+                            MPS = mps,
+                            Raw = genLabel.Text
                         }
                     end
                 end
             end
         end
     end
-
-    return best
+    table.sort(results, function(a, b) return a.MPS > b.MPS end)
+    return results
 end
 
--- ===== RELAY SEND =====
-local function submit(best)
-    if not best then return end
-    if os.clock() - lastSubmit < 4 then return end
-    lastSubmit = os.clock()
+local function categorizeResults(results)
+    local categories = {
+        ["1M - 10M"] = {},
+        ["10M - 100M"] = {},
+        ["100M - INF"] = {},
+        ["HIGHLIGHTS"] = {}
+    }
+    
+    for i = 1, #results do
+        local result = results[i]
+        if result.MPS >= 1e8 then
+            table.insert(categories["100M - INF"], result)
+        elseif result.MPS >= 1e7 then
+            table.insert(categories["10M - 100M"], result)
+        elseif result.MPS >= 1e6 then
+            table.insert(categories["1M - 10M"], result)
+        end
+        
+        if result.MPS >= 5e8 then
+            table.insert(categories["HIGHLIGHTS"], result)
+        end
+    end
+    
+    return categories
+end
 
-    task.spawn(function()
-        pcall(function()
-            request({
-                Url = RELAY_SUBMIT,
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
-                Body = HttpService:JSONEncode({
-                    brainrot = best.Name,
-                    mps = best.MPS,
-                    placeId = PlaceId,
-                    jobId = game.JobId,
-                    players = #Players:GetPlayers(),
-                    maxPlayers = Players.MaxPlayers
-                })
-            })
-            print("[BOT] SENT:", best.Name, best.MPS)
-        end)
+local function buildEmbed(brainrots, category)
+    if #brainrots == 0 then return nil end
+    local best = brainrots[1]
+    local lines = {}
+    for i = 1, math.min(#brainrots, 10) do
+        local b = brainrots[i]
+        local icon = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
+        lines[#lines + 1] = icon .. " " .. b.Name .. " — $" .. formatNumber(b.MPS) .. "/s"
+    end
+    local joinLink = "https://chillihub1.github.io/chillihub-joiner/?placeId=" .. PLACE_ID .. "&gameInstanceId=" .. game.JobId
+    
+    return {
+        title = category .. " | " .. best.Name .. " ($" .. formatNumber(best.MPS) .. "/s)",
+        color = 0x00FF00,
+        fields = {
+            {name = "🧩 Top Pet", value = "```" .. best.Name .. " — $" .. formatNumber(best.MPS) .. "/s```"},
+            {name = "🆔 Server ID", value = "```" .. game.JobId .. "```"},
+            {name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```"},
+            {name = "🧱 Top Brainrots", value = "```" .. table.concat(lines, "\n") .. "```"},
+            {name = "🔗 Join Link", value = "[Click Here](" .. joinLink .. ")"}
+        },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    }
+end
+
+local function buildHighlightEmbed(highlights, allBrainrots)
+    if #highlights == 0 then return nil end
+    local best = highlights[1]
+    local lines = {}
+    for i = 1, math.min(#highlights, 10) do
+        local h = highlights[i]
+        local icon = (i == 1 and "🔥") or (i == 2 and "⚡") or (i == 3 and "💎") or "⭐"
+        lines[#lines + 1] = icon .. " " .. h.Name .. " — $" .. formatNumber(h.MPS) .. "/s"
+    end
+    local joinLink = "https://chillihub1.github.io/chillihub-joiner/?placeId=" .. PLACE_ID .. "&gameInstanceId=" .. game.JobId
+    
+    return {
+        title = "🔥 HIGHLIGHTS | " .. best.Name .. " ($" .. formatNumber(best.MPS) .. "/s)",
+        color = 0xFF0000,
+        fields = {
+            {name = "💰 TOP BRAINROT", value = "```" .. best.Name .. " — $" .. formatNumber(best.MPS) .. "/s```"},
+            {name = "🔥 SERVER ID", value = "```" .. game.JobId .. "```"},
+            {name = "👥 PLAYERS", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```"},
+            {name = "🧱 HIGHLIGHTS", value = "```" .. table.concat(lines, "\n") .. "```"},
+            {name = "🔗 JOIN LINK", value = "[CLICK HERE](" .. joinLink .. ")"}
+        },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    }
+end
+
+local function sendToWebhook(webhookUrl, embed)
+    if teleportData.reportedServers[game.JobId] then return end
+    teleportData.reportedServers[game.JobId] = true
+    pcall(function()
+        local payload = {embeds = {embed}}
+        local jsonPayload = HttpService:JSONEncode(payload)
+        request({Url = webhookUrl, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = jsonPayload})
     end)
 end
 
--- ===== SERVER LIST =====
-local function getServers(cursor)
-    local url =
-        "https://games.roblox.com/v1/games/" ..
-        PlaceId ..
-        "/servers/Public?sortOrder=Desc&limit=100" ..
-        (cursor and "&cursor="..cursor or "")
-
-    local res = request({ Url = url, Method = "GET" })
-    if not res or not res.Body then return end
-    return HttpService:JSONDecode(res.Body)
-end
-
--- ===== SERVER HOP =====
-local function hopServer()
-    if hopping then return end
-    hopping = true
-
-    local cursor = nil
-
-    for _ = 1, MAX_PAGES do
-        local data = getServers(cursor)
-        if not data or not data.data then break end
-
-        for _,s in ipairs(data.data) do
-            if s.playing < s.maxPlayers and not visited[s.id] then
-                visited[s.id] = true
-                TeleportService:TeleportToPlaceInstance(
-                    PlaceId,
-                    s.id,
-                    Player
-                )
-                return
+local function executeServerHop()
+    local currentJobId = game.JobId
+    
+    local servers = {}
+    local success, data = pcall(function()
+        local response = request({
+            Url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Desc&limit=100",
+            Method = "GET"
+        })
+        if response.Success then
+            return HttpService:JSONDecode(response.Body)
+        end
+        return nil
+    end)
+    
+    if success and data and data.data then
+        servers = data.data
+    end
+    
+    local availableServers = {}
+    
+    for _, server in ipairs(servers) do
+        if server.id ~= currentJobId then
+            local isVisited = teleportData.visitedServers[server.id]
+            if not isVisited and server.playing < server.maxPlayers then
+                availableServers[#availableServers + 1] = server
             end
         end
-
-        cursor = data.nextPageCursor
-        if not cursor then break end
     end
-
-    hopping = false
+    
+    if #availableServers > 0 then
+        table.sort(availableServers, function(a, b) return a.playing > b.playing end)
+        local targetServer = availableServers[1]
+        teleportData.visitedServers[targetServer.id] = true
+        
+        task.wait(1)
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, targetServer.id, Players.LocalPlayer, teleportData)
+        return true
+    else
+        teleportData.visitedServers = {}
+        teleportData.visitedServers[currentJobId] = true
+        
+        task.wait(2)
+        TeleportService:Teleport(PLACE_ID, Players.LocalPlayer, teleportData)
+        return false
+    end
 end
 
--- ===== LOOPS =====
-task.spawn(function()
-    while task.wait(SCAN_DELAY) do
-        local best = scanBestBrainrot()
-        if best then
-            submit(best)
+local function processBrainrots()
+    local brainrots = scanBrainrots()
+    if #brainrots > 0 then
+        local categories = categorizeResults(brainrots)
+        
+        if #categories["1M - 10M"] > 0 then
+            local embed = buildEmbed(categories["1M - 10M"], "1M - 10M")
+            if embed then sendToWebhook(Webhook1M, embed) end
         end
+        
+        if #categories["10M - 100M"] > 0 then
+            local embed = buildEmbed(categories["10M - 100M"], "10M - 100M")
+            if embed then sendToWebhook(Webhook10M, embed) end
+        end
+        
+        if #categories["100M - INF"] > 0 then
+            local embed = buildEmbed(categories["100M - INF"], "100M - INF")
+            if embed then sendToWebhook(Webhook100M, embed) end
+        end
+        
+        if #categories["HIGHLIGHTS"] > 0 then
+            local embed = buildHighlightEmbed(categories["HIGHLIGHTS"], brainrots)
+            if embed then sendToWebhook(WebhookHighlights, embed) end
+        end
+        
+        return true
     end
-end)
+    return false
+end
 
-task.spawn(function()
-    while task.wait(HOP_DELAY) do
-        hopServer()
+task.wait(5)
+
+processBrainrots()
+
+for i = 1, RUNS_CONFIG do
+    task.wait(10)
+    
+    local foundBrainrots = processBrainrots()
+    
+    if foundBrainrots then
+        task.wait(5)
     end
-end)
+    
+    local hopSuccess = executeServerHop()
+    
+    if hopSuccess then
+        task.wait(15)
+    else
+        task.wait(10)
+    end
+end
