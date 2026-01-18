@@ -17,7 +17,7 @@ if not httpRequest then return end
 local RELAY_URL = "https://unified-maker-caribbean-infrastructure.trycloudflare.com/submit"
 local THRESHOLD = 1e6
 local COOLDOWN = 6
-local SEND_DELAY = 2
+local SEND_DELAY = 1
 local MAX_HOPS = 999
 
 local function formatNumber(num)
@@ -155,14 +155,15 @@ local function routeBrainrots(brainrots)
     local best = brainrots[1]
     local main = buildMainEmbed(brainrots)
     local hi = buildHighlightEmbed(brainrots)
+    
     if best.MPS < 1e7 then
         queueWebhook(WEBHOOK_1M_10M, main, best.MPS)
     elseif best.MPS < 1e8 then
         queueWebhook(WEBHOOK_10M_100M, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)
+        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)  -- Send to highlights for 10M-100M
     else
         queueWebhook(WEBHOOK_100M_INF, main, best.MPS)
-        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)
+        queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)  -- Send to highlights for 100M+
     end
     processQueue()
     lastWebhookJobId = game.JobId
@@ -170,8 +171,11 @@ end
 
 -- 1500X SERVER HOPPING SYSTEM (ONLY THIS PART IS 1500X)
 local HOP_MULTIPLIER = 1500  -- Server hopping runs 1500x faster
-local activeHoppers = 0
-local MAX_CONCURRENT_HOPS = 100
+local visitedServers = {}
+local serverIndex = 1
+local serversCache = {}
+local lastCacheTime = 0
+local CACHE_DURATION = 10  -- Cache servers for 10 seconds
 
 local function getServersBatch(cursor)
     local url = "https://games.roblox.com/v1/games/"..PLACE_ID.."/servers/Public?sortOrder=Desc&limit=100"
@@ -187,47 +191,42 @@ local function getServersBatch(cursor)
     return {}, nil
 end
 
-local function getPopulatedServers()
-    local allServers = {}
-    local cursor = ""
-    local attempts = 0
-    
-    -- Fetch servers with 1500x intensity
-    local fetchTasks = {}
-    for i = 1, math.min(50, HOP_MULTIPLIER/30) do
-        table.insert(fetchTasks, task.spawn(function()
-            local servers, nextCursor = getServersBatch(cursor)
-            return servers, nextCursor
-        end))
+local function refreshServersCache()
+    local currentTime = tick()
+    if currentTime - lastCacheTime < CACHE_DURATION and #serversCache > 0 then
+        return serversCache
     end
     
-    while attempts < 5 and #allServers < 100 do
-        for i = #fetchTasks, 1, -1 do
-            local taskResult = fetchTasks[i]
-            if coroutine.status(taskResult) == "dead" then
-                local servers, nextCursor = taskResult:result()
+    local allServers = {}
+    local cursor = ""
+    local visitedSet = {}
+    
+    -- Create unique list of visited servers for quick lookup
+    for serverId, _ in pairs(visitedServers) do
+        visitedSet[serverId] = true
+    end
+    
+    -- Fetch multiple pages to get lots of servers
+    for fetchCount = 1, 5 do  -- Fetch 5 pages = up to 500 servers
+        local servers, nextCursor = getServersBatch(cursor)
+        
+        for _, server in ipairs(servers) do
+            -- Only add populated servers we haven't visited recently
+            if server.playing > 10 and 
+               server.playing < server.maxPlayers - 2 and
+               server.id ~= game.JobId and
+               not visitedSet[server.id] then
                 
-                for _, server in ipairs(servers) do
-                    -- Prefer servers with more players (populated)
-                    if server.playing > 10 and server.playing < server.maxPlayers - 2 then
-                        for j = 1, math.ceil(HOP_MULTIPLIER/50) do  -- Multiply server entries
-                            table.insert(allServers, server)
-                        end
-                    end
-                end
-                
-                if nextCursor and #allServers < 100 then
-                    table.insert(fetchTasks, task.spawn(function()
-                        return getServersBatch(nextCursor)
-                    end))
-                end
-                
-                table.remove(fetchTasks, i)
+                table.insert(allServers, server)
             end
         end
         
-        attempts = attempts + 1
-        task.wait(0.01)
+        if not nextCursor or #allServers >= 300 then
+            break
+        end
+        
+        cursor = nextCursor
+        task.wait(0.01)  -- Small delay to avoid rate limiting
     end
     
     -- Sort by player count (most populated first)
@@ -235,58 +234,87 @@ local function getPopulatedServers()
         return a.playing > b.playing
     end)
     
+    serversCache = allServers
+    lastCacheTime = currentTime
     return allServers
 end
 
+local function getNextUnvisitedServer()
+    local servers = refreshServersCache()
+    
+    if #servers == 0 then
+        -- If no unvisited servers, clear visited list and try again
+        visitedServers = {}
+        servers = refreshServersCache()
+    end
+    
+    if #servers == 0 then
+        return nil  -- No servers available
+    end
+    
+    -- Get next server in rotation
+    local server = servers[serverIndex]
+    serverIndex = serverIndex + 1
+    
+    -- Reset index if we've gone through all servers
+    if serverIndex > #servers then
+        serverIndex = 1
+    end
+    
+    -- Mark server as visited
+    visitedServers[server.id] = true
+    
+    return server
+end
+
 local function rapidTeleport()
-    -- Create 1500x hopper threads
-    for hopperId = 1, math.ceil(HOP_MULTIPLIER/15) do
-        task.spawn(function()
-            while true do
-                -- Scan brainrots normally (NOT 1500x)
-                local brainrots = scanBrainrots()
-                routeBrainrots(brainrots)
-                
-                -- Get populated servers
-                local servers = getPopulatedServers()
-                
-                if #servers > 0 then
-                    -- Try multiple servers simultaneously
-                    local attempts = 0
-                    local maxAttempts = math.min(20, #servers)
-                    
-                    for i = 1, maxAttempts do
-                        local server = servers[math.random(1, #servers)]
-                        
-                        -- Launch teleport attempt
-                        task.spawn(function()
-                            pcall(function()
-                                TeleportService:TeleportToPlaceInstance(PLACE_ID, server.id, Players.LocalPlayer)
-                            end)
-                        end)
-                        
-                        attempts = attempts + 1
-                        
-                        -- Small delay between attempts
-                        if attempts < maxAttempts then
-                            task.wait(0.01)
-                        end
-                    end
-                else
-                    -- Fallback to random teleport
-                    task.spawn(function()
-                        pcall(function()
-                            TeleportService:Teleport(PLACE_ID, Players.LocalPlayer)
-                        end)
-                    end)
+    -- FIX 1: SCAN FIRST BEFORE TELEPORTING
+    while true do
+        -- First, scan for brainrots
+        local brainrots = scanBrainrots()
+        routeBrainrots(brainrots)
+        
+        -- FIX 2: GET UNIQUE SERVER (NOT THE SAME ONE)
+        local server = getNextUnvisitedServer()
+        
+        if server then
+            -- Teleport to the unique server
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(PLACE_ID, server.id, Players.LocalPlayer)
+            end)
+            
+            -- Wait a bit to allow teleport to complete
+            task.wait(0.1)
+            
+            -- Check if teleport succeeded
+            local startTime = tick()
+            while tick() - startTime < 2 do  -- Wait up to 2 seconds for teleport
+                if game.JobId ~= server.id then
+                    break  -- Teleport succeeded
                 end
-                
-                -- Wait before next hop (MUCH faster than normal)
-                task.wait(0.5)  -- 12x faster than original 6 seconds
+                task.wait(0.1)
             end
-        end)
+            
+            -- If still in same server, mark it as failed and try another
+            if game.JobId == server.id then
+                visitedServers[server.id] = nil  -- Remove from visited so we can retry later
+            end
+        else
+            -- No servers found, teleport to random server
+            pcall(function()
+                TeleportService:Teleport(PLACE_ID, Players.LocalPlayer)
+            end)
+            task.wait(2)  -- Wait longer for random teleport
+        end
+        
+        -- Small delay before next scan+hop cycle
+        task.wait(0.3)
     end
 end
 
--- Start the 1500x server hopping system
-rapidTeleport()
+-- Start multiple hoppers (1500x speed)
+for i = 1, math.ceil(HOP_MULTIPLIER / 100) do  -- 15 hoppers for 1500x effect
+    task.spawn(function()
+        rapidTeleport()
+    end)
+end
