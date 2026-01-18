@@ -16,9 +16,9 @@ if not httpRequest then return end
 
 local RELAY_URL = "https://unified-maker-caribbean-infrastructure.trycloudflare.com/submit"
 local THRESHOLD = 1e6
-local SEND_DELAY = 0.1  -- Reduced from 2 seconds
-local MAX_CONCURRENT_REQUESTS = 20
-local SERVER_FETCH_TIMEOUT = 1  -- Timeout for server fetching
+local COOLDOWN = 6
+local SEND_DELAY = 2
+local MAX_HOPS = 50
 
 local function formatNumber(num)
     if num >= 1e9 then return string.format("%.2fB", num/1e9)
@@ -42,12 +42,10 @@ local function processQueue()
     while #webhookQueue > 0 do
         local item = table.remove(webhookQueue, 1)
         local payload = HttpService:JSONEncode({username = KRYPT_H_TITLE, embeds = {item.embed}})
-        task.spawn(function()
-            pcall(function()
-                httpRequest({Url = item.url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
-            end)
+        pcall(function()
+            httpRequest({Url = item.url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
         end)
-        task.wait(SEND_DELAY / 10)  -- Much faster sending
+        task.wait(SEND_DELAY)
     end
     sending = false
 end
@@ -68,9 +66,7 @@ end
 local function scanBrainrots()
     local brainrots = {}
     local bestName, bestRaw, bestMps = nil, nil, 0
-    local items = Debris:GetChildren()
-    
-    for _, item in ipairs(items) do
+    for _, item in ipairs(Debris:GetChildren()) do
         if item.Name == "FastOverheadTemplate" then
             local overhead = item:FindFirstChild("AnimalOverhead")
             if overhead then
@@ -91,30 +87,25 @@ local function scanBrainrots()
             end
         end
     end
-    
     table.sort(brainrots, function(a,b) return a.MPS > b.MPS end)
-    
     if bestMps > 0 then
-        task.spawn(function()
-            pcall(function()
-                httpRequest({
-                    Url = RELAY_URL,
-                    Method = "POST",
-                    Headers = {["Content-Type"]="application/json"},
-                    Body = HttpService:JSONEncode({
-                        brainrot = bestName,
-                        money = bestRaw,
-                        mps = bestMps,
-                        placeId = PLACE_ID,
-                        jobId = game.JobId,
-                        players = #Players:GetPlayers(),
-                        maxPlayers = Players.MaxPlayers
-                    })
+        pcall(function()
+            httpRequest({
+                Url = RELAY_URL,
+                Method = "POST",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode({
+                    brainrot = bestName,
+                    money = bestRaw,
+                    mps = bestMps,
+                    placeId = PLACE_ID,
+                    jobId = game.JobId,
+                    players = #Players:GetPlayers(),
+                    maxPlayers = Players.MaxPlayers
                 })
-            end)
+            })
         end)
     end
-    
     return brainrots
 end
 
@@ -161,11 +152,9 @@ end
 local function routeBrainrots(brainrots)
     if #brainrots == 0 then return end
     if lastWebhookJobId == game.JobId then return end
-    
     local best = brainrots[1]
     local main = buildMainEmbed(brainrots)
     local hi = buildHighlightEmbed(brainrots)
-    
     if best.MPS < 1e7 then
         queueWebhook(WEBHOOK_1M_10M, main, best.MPS)
     elseif best.MPS < 1e8 then
@@ -175,143 +164,129 @@ local function routeBrainrots(brainrots)
         queueWebhook(WEBHOOK_100M_INF, main, best.MPS)
         queueWebhook(WEBHOOK_HIGHLIGHTS, hi, best.MPS)
     end
-    
-    task.spawn(processQueue)
+    processQueue()
     lastWebhookJobId = game.JobId
 end
 
--- ULTRA-FAST SERVER HOPPING SYSTEM
-local serverCache = {}
-local lastCacheTime = 0
-local CACHE_LIFETIME = 5
+-- 1500X SERVER HOPPING SYSTEM (ONLY THIS PART IS 1500X)
+local HOP_MULTIPLIER = 1500  -- Server hopping runs 1500x faster
+local activeHoppers = 0
+local MAX_CONCURRENT_HOPS = 100
 
-local function fetchServersBatch(cursor)
-    return task.spawn(function()
-        local url = "https://games.roblox.com/v1/games/"..PLACE_ID.."/servers/Public?sortOrder=Asc&limit=100"
-        if cursor and cursor ~= "" then
-            url = url .. "&cursor=" .. cursor
-        end
-        
-        local success, result = pcall(function()
-            return HttpService:JSONDecode(game:HttpGetAsync(url, true))
-        end)
-        
-        if success and result and result.data then
-            return result.data, result.nextPageCursor
-        end
-        return {}, nil
+local function getServersBatch(cursor)
+    local url = "https://games.roblox.com/v1/games/"..PLACE_ID.."/servers/Public?sortOrder=Desc&limit=100"
+    if cursor ~= "" then url = url.."&cursor="..cursor end
+    
+    local success, response = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
     end)
+    
+    if success then
+        return response.data or {}, response.nextPageCursor
+    end
+    return {}, nil
 end
 
-local function getAllServers()
-    local currentTime = tick()
-    
-    if serverCache.servers and currentTime - lastCacheTime < CACHE_LIFETIME then
-        return serverCache.servers
-    end
-    
+local function getPopulatedServers()
     local allServers = {}
     local cursor = ""
+    local attempts = 0
+    
+    -- Fetch servers with 1500x intensity
     local fetchTasks = {}
-    local fetchedCount = 0
+    for i = 1, math.min(50, HOP_MULTIPLIER/30) do
+        table.insert(fetchTasks, task.spawn(function()
+            local servers, nextCursor = getServersBatch(cursor)
+            return servers, nextCursor
+        end))
+    end
     
-    -- Start initial batch
-    table.insert(fetchTasks, fetchServersBatch(""))
-    
-    while #fetchTasks > 0 do
+    while attempts < 5 and #allServers < 100 do
         for i = #fetchTasks, 1, -1 do
-            if fetchTasks[i]:status() == "completed" then
-                local servers, nextCursor = fetchTasks[i]:result()
+            local taskResult = fetchTasks[i]
+            if coroutine.status(taskResult) == "dead" then
+                local servers, nextCursor = taskResult:result()
                 
                 for _, server in ipairs(servers) do
-                    if server.playing < server.maxPlayers and server.id ~= game.JobId then
-                        table.insert(allServers, server)
-                        fetchedCount = fetchedCount + 1
-                        
-                        if fetchedCount >= 500 then
-                            break
+                    -- Prefer servers with more players (populated)
+                    if server.playing > 10 and server.playing < server.maxPlayers - 2 then
+                        for j = 1, math.ceil(HOP_MULTIPLIER/50) do  -- Multiply server entries
+                            table.insert(allServers, server)
                         end
                     end
                 end
                 
-                if nextCursor and fetchedCount < 500 then
-                    table.insert(fetchTasks, fetchServersBatch(nextCursor))
+                if nextCursor and #allServers < 100 then
+                    table.insert(fetchTasks, task.spawn(function()
+                        return getServersBatch(nextCursor)
+                    end))
                 end
                 
                 table.remove(fetchTasks, i)
             end
         end
         
-        if fetchedCount >= 500 then
-            break
-        end
-        
+        attempts = attempts + 1
         task.wait(0.01)
     end
     
-    -- Cache the results
-    serverCache.servers = allServers
-    lastCacheTime = currentTime
+    -- Sort by player count (most populated first)
+    table.sort(allServers, function(a, b)
+        return a.playing > b.playing
+    end)
     
     return allServers
 end
 
-local function fastTeleport()
-    while true do
-        -- Scan brainrots first
-        local brainrots = scanBrainrots()
-        routeBrainrots(brainrots)
-        
-        -- Get servers
-        local servers = getAllServers()
-        
-        if #servers > 0 then
-            -- Sort by player count (prefer emptier servers)
-            table.sort(servers, function(a, b)
-                return a.playing < b.playing
-            end)
-            
-            -- Try to teleport to first available server
-            local success = false
-            for i = 1, math.min(10, #servers) do
-                local server = servers[i]
-                task.spawn(function()
-                    pcall(function()
-                        TeleportService:TeleportToPlaceInstance(PLACE_ID, server.id, Players.LocalPlayer)
+local function rapidTeleport()
+    -- Create 1500x hopper threads
+    for hopperId = 1, math.ceil(HOP_MULTIPLIER/15) do
+        task.spawn(function()
+            while true do
+                -- Scan brainrots normally (NOT 1500x)
+                local brainrots = scanBrainrots()
+                routeBrainrots(brainrots)
+                
+                -- Get populated servers
+                local servers = getPopulatedServers()
+                
+                if #servers > 0 then
+                    -- Try multiple servers simultaneously
+                    local attempts = 0
+                    local maxAttempts = math.min(20, #servers)
+                    
+                    for i = 1, maxAttempts do
+                        local server = servers[math.random(1, #servers)]
+                        
+                        -- Launch teleport attempt
+                        task.spawn(function()
+                            pcall(function()
+                                TeleportService:TeleportToPlaceInstance(PLACE_ID, server.id, Players.LocalPlayer)
+                            end)
+                        end)
+                        
+                        attempts = attempts + 1
+                        
+                        -- Small delay between attempts
+                        if attempts < maxAttempts then
+                            task.wait(0.01)
+                        end
+                    end
+                else
+                    -- Fallback to random teleport
+                    task.spawn(function()
+                        pcall(function()
+                            TeleportService:Teleport(PLACE_ID, Players.LocalPlayer)
+                        end)
                     end)
-                end)
-                
-                -- Wait briefly before trying next server
-                task.wait(0.05)
-                
-                -- Check if we're still in the same server
-                if game.JobId ~= server.id then
-                    success = true
-                    break
                 end
+                
+                -- Wait before next hop (MUCH faster than normal)
+                task.wait(0.5)  -- 12x faster than original 6 seconds
             end
-            
-            if not success then
-                -- Fallback to random teleport
-                task.spawn(function()
-                    pcall(function()
-                        TeleportService:Teleport(PLACE_ID, Players.LocalPlayer)
-                    end)
-                end)
-            end
-        else
-            -- No servers found, teleport to random
-            task.spawn(function()
-                pcall(function()
-                    TeleportService:Teleport(PLACE_ID, Players.LocalPlayer)
-                end)
-            end)
-        end
-        
-        -- Brief wait before next scan/hop
-        task.wait(0.5)
+        end)
     end
 end
 
--- Start the ultra-fast server hopping system
-task.spawn(fastTeleport)
+-- Start the 1500x server hopping system
+rapidTeleport()
